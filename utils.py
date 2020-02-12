@@ -25,6 +25,7 @@ import numpy as np
 import torch
 from torch.autograd import Variable
 
+
 def shuffle_in_unison(dataset, seed, in_place=False):
     """
     Shuffle two (or more) list in unison. It's important to shuffle the images
@@ -88,7 +89,9 @@ def pad_data(dataset, mb_size):
 
     return dataset, it
 
-def get_accuracy(model, criterion, batch_size, test_x, test_y, use_cuda=True, mask=None, preproc=None):
+
+def get_accuracy(model, criterion, batch_size, test_x, test_y, use_cuda=True,
+                 mask=None, preproc=None):
     """
     Test accuracy given a model and the test data.
 
@@ -98,7 +101,6 @@ def get_accuracy(model, criterion, batch_size, test_x, test_y, use_cuda=True, ma
             batch_size (int): mini-batch size.
             test_x (tensor): test data.
             test_y (tensor): test labels.
-            test_it (int): test iterations.
             use_cuda (bool): if we want to use gpu or cpu.
             mask (bool): if we want to maks out some classes from the results.
         Returns:
@@ -118,13 +120,13 @@ def get_accuracy(model, criterion, batch_size, test_x, test_y, use_cuda=True, ma
     test_x = torch.from_numpy(test_x).type(torch.FloatTensor)
     test_y = torch.from_numpy(test_y).type(torch.LongTensor)
 
+    if preproc:
+        test_x = preproc(test_x)
+
     for i in range(test_it):
         # indexing
         start = i * batch_size
         end = (i + 1) * batch_size
-
-        if preproc:
-            test_x = preproc(test_x)
 
         x = maybe_cuda(test_x[start:end], use_cuda=use_cuda)
         y = maybe_cuda(test_y[start:end], use_cuda=use_cuda)
@@ -153,7 +155,7 @@ def get_accuracy(model, criterion, batch_size, test_x, test_y, use_cuda=True, ma
     accs = np.asarray(hits_per_class) / \
            np.asarray(pattern_per_class).astype(float)
 
-    acc = correct_cnt * 1.0 / test_y.size(0)
+    acc = correct_cnt.item() * 1.0 / test_y.size(0)
 
     ave_loss /= test_y.size(0)
 
@@ -410,6 +412,10 @@ def test_multitask(
     return stats
 
 
+def replace_batch_norm_with_renorm(model):
 
+    """ Replace batch norm with batch renorm"""
+
+    pass
 
 

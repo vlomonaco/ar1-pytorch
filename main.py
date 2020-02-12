@@ -37,12 +37,22 @@ test_x, test_y = dataset.get_test_set()
 model = ptcv_get_model("mobilenet_w1", pretrained=True)
 model.features.final_pool = torch.nn.AvgPool2d(4)
 model.output = torch.nn.Linear(1024, 50)
+replay_layer = "features.stage4.unit5.dw_conv.bn.bias"
+
+# freezing layers below threshold
+freeze_below_layer = "features.stage5.unit2.pw_conv.bn.bias"
+for name, param in model.named_parameters():
+    # tells whether we want to use gradients for a given parameter
+    param.requires_grad = False
+    print("Freezing parameter " + name)
+    if name == freeze_below_layer:
+        break
 
 # optimizer
 optimizer = torch.optim.SGD(model.parameters(), lr=0.001)
 criterion = torch.nn.CrossEntropyLoss()
 mb_size = 128
-train_ep = 1
+train_ep = 5
 
 # loop over the training incremental batches
 for i, train_batch in enumerate(dataset):
@@ -110,5 +120,7 @@ for i, train_batch in enumerate(dataset):
 
         cur_ep += 1
 
-    ave_loss, acc, accs = get_accuracy(model, criterion, mb_size, test_x, test_y, preproc=preproc)
+    ave_loss, acc, accs = get_accuracy(
+        model, criterion, mb_size, test_x, test_y, preproc=preproc
+    )
     print("Accuracy: ", acc)
