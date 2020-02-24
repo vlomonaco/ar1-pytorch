@@ -109,6 +109,8 @@ def get_accuracy(model, criterion, batch_size, test_x, test_y, use_cuda=True,
             accs (list): average accuracy for class.
     """
 
+    model.eval()
+
     correct_cnt, ave_loss = 0, 0
     model = maybe_cuda(model, use_cuda=use_cuda)
 
@@ -417,5 +419,52 @@ def replace_batch_norm_with_renorm(model):
     """ Replace batch norm with batch renorm"""
 
     pass
+
+
+def consolidate_weights(model, cur_clas):
+    """ Mean-shift for the target layer weights"""
+
+    with torch.no_grad():
+        cur_clas = cur_clas
+        # print(model.classifier[0].weight.size())
+        globavg = np.average(model.output.weight.detach()
+                             .cpu().numpy()[cur_clas])
+        print("GlobalAvg: {} ".format(globavg))
+        for c in cur_clas:
+            w = model.output.weight.detach().cpu().numpy()[c]
+
+            if c in cur_clas:
+                new_w = w - globavg
+                model.saved_weights[c] = new_w
+
+            # debug
+            # print(
+            #     "C: " + str(c) + "  -  Avg W: " + str(np.average(w)) +
+            #     " Std W: " + str(np.std(w)) + " Max W: " + str(np.max(w))
+            # )
+
+def set_consolidate_weights(model):
+    """ set trained weights """
+
+    with torch.no_grad():
+        for c, w in model.saved_weights.items():
+            model.output.weight[c].copy_(
+                torch.from_numpy(model.saved_weights[c])
+            )
+
+
+def reset_weights(model, cur_clas):
+    """ reset weights"""
+
+    with torch.no_grad():
+        model.output.weight.fill_(0.0)
+        # model.output.weight.copy_(
+        #     torch.zeros(model.output.weight.size())
+        # )
+        for c, w in model.saved_weights.items():
+            if c in cur_clas:
+                model.output.weight[c].copy_(
+                    torch.from_numpy(model.saved_weights[c])
+                )
 
 
