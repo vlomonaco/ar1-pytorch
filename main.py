@@ -20,6 +20,8 @@ from __future__ import absolute_import
 
 from data_loader import CORE50
 import torch
+import numpy as np
+import copy
 from pytorchcv.model_provider import get_model as ptcv_get_model
 from utils import preprocess_imgs, pad_data, shuffle_in_unison, maybe_cuda,\
     get_accuracy, reset_weights, consolidate_weights, set_consolidate_weights
@@ -57,11 +59,32 @@ mb_size = 128
 inc_train_ep = 4
 init_train_ep = 4
 
+# replay pars
+rm = None
+rm_sz = 2900
+
 # loop over the training incremental batches
 for i, train_batch in enumerate(dataset):
 
     train_x, train_y = train_batch
-    cur_class = [int(o) for  o in set(train_y)]
+    train_x = preproc(train_x)
+
+    # saving patterns for next iter
+    h = rm_sz // (i + 1)
+    idxs_cur = np.random.choice(
+        train_x.shape[0], h, replace=False
+    )
+    rm_add = [train_x[idxs_cur], train_y[idxs_cur]]
+    print("h", h)
+    print("rm_add size", rm_add[0].shape[0])
+
+    # adding eventual replay patterns to the current batch
+    if i > 0:
+        print("rm size", rm[0].shape[0])
+        train_x = np.concatenate((train_x, rm[0]))
+        train_y = np.concatenate((train_y, rm[1]))
+
+    cur_class = [int(o) for o in set(train_y)]
 
     print("----------- batch {0} -------------".format(i))
     print("train_x shape: {}, train_y shape: {}"
@@ -74,9 +97,8 @@ for i, train_batch in enumerate(dataset):
     model.output.train()
     # model.train()
     reset_weights(model, cur_class)
-
     cur_ep = 0
-    train_x = preproc(train_x)
+
 
     (train_x, train_y), it_x_ep = pad_data(
         [train_x, train_y], mb_size
@@ -136,6 +158,17 @@ for i, train_batch in enumerate(dataset):
         cur_ep += 1
 
     consolidate_weights(model, cur_class)
+
+    # replace patterns in random memory
+    if i == 0:
+        rm = copy.deepcopy(rm_add)
+    else:
+        idxs_2_replace = np.random.choice(
+            rm[0].shape[0], h, replace=False
+        )
+        for j, idx in enumerate(idxs_2_replace):
+            rm[0][idx] = copy.deepcopy(rm_add[0][j])
+            rm[1][idx] = copy.deepcopy(rm_add[1][j])
 
     set_consolidate_weights(model)
     ave_loss, acc, accs = get_accuracy(
