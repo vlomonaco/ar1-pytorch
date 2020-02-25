@@ -24,7 +24,8 @@ import numpy as np
 import copy
 from pytorchcv.model_provider import get_model as ptcv_get_model
 from utils import preprocess_imgs, pad_data, shuffle_in_unison, maybe_cuda,\
-    get_accuracy, reset_weights, consolidate_weights, set_consolidate_weights
+    get_accuracy, reset_weights, consolidate_weights, \
+    set_consolidate_weights, examples_per_class
 
 # Hardware setup
 use_cuda = True
@@ -42,6 +43,8 @@ model.features.final_pool = torch.nn.AvgPool2d(4)
 model.output = torch.nn.Linear(1024, 50, bias=True)
 replay_layer = "features.stage4.unit5.dw_conv.bn.bias"
 model.saved_weights = {}
+model.past_j = {i:0 for i in range(50)}
+model.cur_j = {i:0 for i in range(50)}
 
 # freezing layers below threshold
 freeze_below_layer = "features.stage5.unit2.pw_conv.bn.bias"
@@ -53,7 +56,9 @@ for name, param in model.named_parameters():
         break
 
 # optimizer
-optimizer = torch.optim.SGD(model.output.parameters(), lr=0.01)
+optimizer = torch.optim.SGD(
+    model.output.parameters(), lr=0.01, momentum=0.9, weight_decay=0.0005
+)
 criterion = torch.nn.CrossEntropyLoss()
 mb_size = 128
 inc_train_ep = 4
@@ -61,7 +66,7 @@ init_train_ep = 4
 
 # replay pars
 rm = None
-rm_sz = 2900
+rm_sz = 1500
 
 # loop over the training incremental batches
 for i, train_batch in enumerate(dataset):
@@ -70,12 +75,15 @@ for i, train_batch in enumerate(dataset):
     train_x = preproc(train_x)
 
     # saving patterns for next iter
-    h = rm_sz // (i + 1)
+    h = min(rm_sz // (i + 1), train_x.shape[0])
+    print("h", h)
+    print("train x sz: ", train_x.shape[0])
+
     idxs_cur = np.random.choice(
         train_x.shape[0], h, replace=False
     )
     rm_add = [train_x[idxs_cur], train_y[idxs_cur]]
-    print("h", h)
+
     print("rm_add size", rm_add[0].shape[0])
 
     # adding eventual replay patterns to the current batch
@@ -85,6 +93,8 @@ for i, train_batch in enumerate(dataset):
         train_y = np.concatenate((train_y, rm[1]))
 
     cur_class = [int(o) for o in set(train_y)]
+    model.cur_j = examples_per_class(train_y)
+
 
     print("----------- batch {0} -------------".format(i))
     print("train_x shape: {}, train_y shape: {}"
@@ -174,4 +184,9 @@ for i, train_batch in enumerate(dataset):
     ave_loss, acc, accs = get_accuracy(
         model, criterion, mb_size, test_x, test_y, preproc=preproc
     )
+
+    # update number examples encountered over time
+    for c, n in model.cur_j.items():
+        model.past_j[c] += n
+
     print("Accuracy: ", acc)

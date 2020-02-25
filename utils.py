@@ -425,7 +425,6 @@ def consolidate_weights(model, cur_clas):
     """ Mean-shift for the target layer weights"""
 
     with torch.no_grad():
-        cur_clas = cur_clas
         # print(model.classifier[0].weight.size())
         globavg = np.average(model.output.weight.detach()
                              .cpu().numpy()[cur_clas])
@@ -435,7 +434,12 @@ def consolidate_weights(model, cur_clas):
 
             if c in cur_clas:
                 new_w = w - globavg
-                model.saved_weights[c] = new_w
+                if c in model.saved_weights.keys():
+                    wpast_j = np.sqrt(model.past_j[c] / model.cur_j[c])
+                    model.saved_weights[c] = (model.saved_weights[c] * wpast_j
+                     + new_w) / (wpast_j + 1)
+                else:
+                    model.saved_weights[c] = new_w
 
             # debug
             # print(
@@ -466,5 +470,13 @@ def reset_weights(model, cur_clas):
                 model.output.weight[c].copy_(
                     torch.from_numpy(model.saved_weights[c])
                 )
+
+def examples_per_class(train_y):
+    count = {i:0 for i in range(50)}
+    for y in train_y:
+        count[int(y)] +=1
+
+    return count
+
 
 
