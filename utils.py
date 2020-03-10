@@ -24,6 +24,8 @@ from __future__ import absolute_import
 import numpy as np
 import torch
 from torch.autograd import Variable
+from batch_renormalization import BatchRenormalization2D
+from batch_renorm import BatchRenorm2d
 
 
 def shuffle_in_unison(dataset, seed, in_place=False):
@@ -54,6 +56,16 @@ def shuffle_in_unison(dataset, seed, in_place=False):
     if not in_place:
         return new_dataset
 
+def shuffle_in_unison_pytorch(dataset, seed=None):
+
+    shuffled_dataset = []
+    perm = torch.randperm(dataset[0].size(0))
+    if seed:
+        torch.manual_seed(seed)
+    for x in dataset:
+        shuffled_dataset.append(x[perm])
+
+    return shuffled_dataset
 
 def pad_data(dataset, mb_size):
     """
@@ -413,13 +425,64 @@ def test_multitask(
 
     return stats
 
+def replace_bn_with_brn(
+        m, name="", momentum=0.1, r_d_max_inc_step=0.0001, r_max=1.0,
+        d_max=0.0):
+    for attr_str in dir(m):
+        target_attr = getattr(m, attr_str)
+        if type(target_attr) == torch.nn.BatchNorm2d:
+            # print('replaced: ', name, attr_str)
+            setattr(m, attr_str,
+                    BatchRenormalization2D(
+                        target_attr.num_features,
+                        gamma=target_attr.weight,
+                        beta=target_attr.bias,
+                        running_mean=target_attr.running_mean,
+                        running_var=target_attr.running_var,
+                        eps=target_attr.eps,
+                        momentum=momentum,
+                        r_d_max_inc_step=r_d_max_inc_step,
+                        r_max=r_max,
+                        d_max=d_max
+                        )
+                    # BatchRenormalization2D(target_attr.num_features)
+                    # BatchRenorm2d(
+                    #     target_attr.num_features,
+                    #     weight=target_attr.weight,
+                    #     bias=target_attr.bias,
+                    #     running_mean=target_attr.running_mean,
+                    #     running_std=target_attr.running_var,
+                    #     eps=target_attr.eps,
+                    #     momentum=target_attr.momentum,
+                    #     num_batches_tracked=target_attr.num_batches_tracked
+                    #     )
+                    # BatchRenorm2d(
+                    #     target_attr.num_features,
+                    #     weight=target_attr.weight,
+                    #     bias=target_attr.bias,
+                    #     running_mean=target_attr.running_mean,
+                    #     running_var=target_attr.running_var,
+                    #     eps=target_attr.eps,
+                    #     momentum=target_attr.momentum,
+                    #     num_batches_tracked=target_attr.num_batches_tracked
+                    # )
+                    )
+    for n, ch in m.named_children():
+        replace_bn_with_brn(ch, n, momentum, r_d_max_inc_step)
 
-def replace_batch_norm_with_renorm(model):
+def change_brn_pars(
+        m, name="", momentum=0.1, r_d_max_inc_step=0.0001, r_max=1.0,
+        d_max=0.0):
+    for attr_str in dir(m):
+        target_attr = getattr(m, attr_str)
+        if type(target_attr) == BatchRenormalization2D:
+            target_attr.momentum = torch.tensor((momentum), requires_grad=False)
+            target_attr.r_max = torch.tensor(r_max, requires_grad=False)
+            target_attr.d_max = torch.tensor(d_max, requires_grad=False)
+            target_attr.r_d_max_inc_step = r_d_max_inc_step
 
-    """ Replace batch norm with batch renorm"""
-
-    pass
-
+    for n, ch in m.named_children():
+        change_brn_pars(ch, n, momentum, r_d_max_inc_step)
 
 def consolidate_weights(model, cur_clas):
     """ Mean-shift for the target layer weights"""
@@ -428,14 +491,18 @@ def consolidate_weights(model, cur_clas):
         # print(model.classifier[0].weight.size())
         globavg = np.average(model.output.weight.detach()
                              .cpu().numpy()[cur_clas])
-        print("GlobalAvg: {} ".format(globavg))
+        # print("GlobalAvg: {} ".format(globavg))
         for c in cur_clas:
             w = model.output.weight.detach().cpu().numpy()[c]
 
             if c in cur_clas:
                 new_w = w - globavg
+                # if len(cur_clas) == 10:
+                #     print("This is first batch!")
+                #     new_w *= 4
                 if c in model.saved_weights.keys():
                     wpast_j = np.sqrt(model.past_j[c] / model.cur_j[c])
+                    # wpast_j = model.past_j[c] / model.cur_j[c]
                     model.saved_weights[c] = (model.saved_weights[c] * wpast_j
                      + new_w) / (wpast_j + 1)
                 else:
@@ -477,6 +544,22 @@ def examples_per_class(train_y):
         count[int(y)] +=1
 
     return count
+
+def set_brn_to_train(m, name=""):
+        for attr_str in dir(m):
+            target_attr = getattr(m, attr_str)
+            if type(target_attr) == BatchRenormalization2D:
+                target_attr.train()
+                # print("setting to train..")
+        for n, ch in m.named_children():
+            set_brn_to_train(ch, n)
+
+if __name__ == "__main__":
+
+    from mobilenet import MyMobilenetV1
+    model = MyMobilenetV1(pretrained=True)
+
+    replace_bn_with_brn(model, "net")
 
 
 

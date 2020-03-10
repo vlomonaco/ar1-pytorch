@@ -23,6 +23,8 @@ import torch
 import numpy as np
 import copy
 from pytorchcv.model_provider import get_model as ptcv_get_model
+# from mobilenet import mobilenet_v1_core50
+from mobilenet import MyMobilenetV1
 from utils import preprocess_imgs, pad_data, shuffle_in_unison, maybe_cuda,\
     get_accuracy, reset_weights, consolidate_weights, \
     set_consolidate_weights, examples_per_class
@@ -31,23 +33,26 @@ from utils import preprocess_imgs, pad_data, shuffle_in_unison, maybe_cuda,\
 use_cuda = True
 
 # Create the dataset object
-dataset = CORE50(root='/home/admin/Ior50N/128', scenario="nicv2_79")
+dataset = CORE50(root='/home/admin/Ior50N/128', scenario="nicv2_391")
 preproc = preprocess_imgs
 
 # Get the fixed test set
 test_x, test_y = dataset.get_test_set()
 
 # Model
-model = ptcv_get_model("mobilenet_w1", pretrained=True)
-model.features.final_pool = torch.nn.AvgPool2d(4)
-model.output = torch.nn.Linear(1024, 50, bias=True)
+# model = ptcv_get_model("mobilenet_w1", pretrained=True)
+# model.features.final_pool = torch.nn.AvgPool2d(4)
+# model.output = torch.nn.Linear(1024, 50, bias=True)
+# model = mobilenet_v1_core50()
+model = MyMobilenetV1(pretrained=True)
 replay_layer = "features.stage4.unit5.dw_conv.bn.bias"
 model.saved_weights = {}
 model.past_j = {i:0 for i in range(50)}
 model.cur_j = {i:0 for i in range(50)}
 
 # freezing layers below threshold
-freeze_below_layer = "features.stage5.unit2.pw_conv.bn.bias"
+# freeze_below_layer = "features.stage5.unit2.pw_conv.bn.bias"
+freeze_below_layer = "end_features.0.unit2.pw_conv.bn.bias"
 for name, param in model.named_parameters():
     # tells whether we want to use gradients for a given parameter
     param.requires_grad = False
@@ -56,8 +61,11 @@ for name, param in model.named_parameters():
         break
 
 # optimizer
+# optimizer = torch.optim.SGD(
+#     model.output.parameters(), lr=0.001, momentum=0.9, weight_decay=0.0005
+# )
 optimizer = torch.optim.SGD(
-    model.output.parameters(), lr=0.01, momentum=0.9, weight_decay=0.0005
+    model.output.parameters(), lr=0.05, momentum=0, weight_decay=0
 )
 criterion = torch.nn.CrossEntropyLoss()
 mb_size = 128
@@ -95,7 +103,6 @@ for i, train_batch in enumerate(dataset):
     cur_class = [int(o) for o in set(train_y)]
     model.cur_j = examples_per_class(train_y)
 
-
     print("----------- batch {0} -------------".format(i))
     print("train_x shape: {}, train_y shape: {}"
           .format(train_x.shape, train_y.shape))
@@ -108,7 +115,6 @@ for i, train_batch in enumerate(dataset):
     # model.train()
     reset_weights(model, cur_class)
     cur_ep = 0
-
 
     (train_x, train_y), it_x_ep = pad_data(
         [train_x, train_y], mb_size
@@ -134,6 +140,10 @@ for i, train_batch in enumerate(dataset):
 
         print("training ep: ", ep)
         correct_cnt, ave_loss = 0, 0
+
+        n2inject = rm_sz // it_x_ep + 1
+        print("n2inject", n2inject)
+
         for it in range(it_x_ep):
 
             start = it * mb_size
@@ -143,6 +153,7 @@ for i, train_batch in enumerate(dataset):
 
             x_mb = maybe_cuda(train_x[start:end], use_cuda=use_cuda)
             y_mb = maybe_cuda(train_y[start:end], use_cuda=use_cuda)
+
             logits = model(x_mb)
 
             _, pred_label = torch.max(logits, 1)
