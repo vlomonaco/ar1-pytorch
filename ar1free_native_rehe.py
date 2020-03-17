@@ -35,19 +35,23 @@ os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
 # hyperparams
 init_lr = 0.001
-inc_lr = 0.001
+inc_lr = 0.0003
 mb_size = 128
 init_train_ep = 4
 inc_train_ep = 4
 init_update_rate = 0.01
-inc_update_rate = 0.00001
+inc_update_rate = 0.0001
+max_r_max = 1.25
+max_d_max = 0.5
+inc_step = 4.1e-05
 rm_sz = 1500
-momentum = 0
-l2 = 0
+momentum = 0.9
+l2 = 0.0005
 rm = None
 
 # Tensorboard setup
-exp_name = "cwr_brn_1500"
+exp_name = "ar1free_brn_native_rehe_1500_v14"
+comment = "r_max, d_max fixed... late layers unfrozen"
 
 log_dir = 'logs/' + exp_name
 summary_writer = tf.summary.create_file_writer(log_dir)
@@ -62,20 +66,24 @@ test_x, test_y = dataset.get_test_set()
 
 # Model
 model = MyMobilenetV1(pretrained=True)
-replace_bn_with_brn(model, momentum=init_update_rate, r_d_max_inc_step=0.000164)
+replace_bn_with_brn(
+    model, momentum=init_update_rate, r_d_max_inc_step=inc_step,
+    max_r_max=max_r_max, max_d_max=max_d_max
+)
 model.saved_weights = {}
 model.past_j = {i:0 for i in range(50)}
 model.cur_j = {i:0 for i in range(50)}
 
 # freezing layers below threshold
-freeze_below_layer = "end_features.0.unit2.pw_conv.bn.beta"
+# freeze_below_layer = "end_features.0.unit2.pw_conv.bn.beta"
 # freeze_below_layer = "end_features.0.unit2.pw_conv.bn.bias"
-for name, param in model.named_parameters():
-    # tells whether we want to use gradients for a given parameter
-    param.requires_grad = False
-    print("Freezing parameter " + name)
-    if name == freeze_below_layer:
-        break
+# freeze_below_layer = "lat_features.4.unit6.pw_conv.bn.beta"
+# for name, param in model.named_parameters():
+#     # tells whether we want to use gradients for a given parameter
+#     param.requires_grad = False
+#     print("Freezing parameter " + name)
+#     if name == freeze_below_layer:
+#         break
 
 # optimizer
 optimizer = torch.optim.SGD(
@@ -94,7 +102,11 @@ hyper = json.dumps(
         "init_update_rate": init_update_rate,
         "inc_update_rate": inc_update_rate,
         "momentum": momentum,
-        "l2": l2
+        "l2": l2,
+        "max_r_max": max_r_max,
+        "max_d_max": max_d_max,
+        "r_d_inc_step": inc_step,
+        "comment": comment
     }
 )
 
@@ -106,8 +118,8 @@ for i, train_batch in enumerate(dataset):
 
     if i == 1:
         change_brn_pars(
-            model, momentum=inc_update_rate, r_d_max_inc_step=0, r_max=1.5,
-            d_max=2.5)
+            model, momentum=inc_update_rate, r_d_max_inc_step=0, r_max=1.25,
+            d_max=0.5)
         optimizer = torch.optim.SGD(
             model.parameters(), lr=inc_lr, momentum=momentum, weight_decay=l2
         )
@@ -144,10 +156,11 @@ for i, train_batch in enumerate(dataset):
     print("train_x shape: {}, train_y shape: {}"
           .format(train_x.shape, train_y.shape))
 
-    model.eval()
-    set_brn_to_train(model)
-    print("setting to train..")
-    model.output.train()
+    # model.eval()
+    # set_brn_to_train(model)
+    # model.end_features.train()
+    # model.output.train()
+    model.train()
 
     reset_weights(model, cur_class)
     cur_ep = 0

@@ -28,7 +28,7 @@ from batch_renormalization import BatchRenormalization2D
 from batch_renorm import BatchRenorm2d
 
 
-def shuffle_in_unison(dataset, seed, in_place=False):
+def shuffle_in_unison(dataset, seed=None, in_place=False):
     """
     Shuffle two (or more) list in unison. It's important to shuffle the images
     and the labels maintaining their correspondence.
@@ -43,7 +43,8 @@ def shuffle_in_unison(dataset, seed, in_place=False):
                   is set to False.
     """
 
-    np.random.seed(seed)
+    if seed:
+        np.random.seed(seed)
     rng_state = np.random.get_state()
     new_dataset = []
     for x in dataset:
@@ -427,7 +428,7 @@ def test_multitask(
 
 def replace_bn_with_brn(
         m, name="", momentum=0.1, r_d_max_inc_step=0.0001, r_max=1.0,
-        d_max=0.0):
+        d_max=0.0, max_r_max=3.0, max_d_max=5.0):
     for attr_str in dir(m):
         target_attr = getattr(m, attr_str)
         if type(target_attr) == torch.nn.BatchNorm2d:
@@ -443,7 +444,9 @@ def replace_bn_with_brn(
                         momentum=momentum,
                         r_d_max_inc_step=r_d_max_inc_step,
                         r_max=r_max,
-                        d_max=d_max
+                        d_max=d_max,
+                        max_r_max=max_r_max,
+                        max_d_max=max_d_max
                         )
                     # BatchRenormalization2D(target_attr.num_features)
                     # BatchRenorm2d(
@@ -456,19 +459,10 @@ def replace_bn_with_brn(
                     #     momentum=target_attr.momentum,
                     #     num_batches_tracked=target_attr.num_batches_tracked
                     #     )
-                    # BatchRenorm2d(
-                    #     target_attr.num_features,
-                    #     weight=target_attr.weight,
-                    #     bias=target_attr.bias,
-                    #     running_mean=target_attr.running_mean,
-                    #     running_var=target_attr.running_var,
-                    #     eps=target_attr.eps,
-                    #     momentum=target_attr.momentum,
-                    #     num_batches_tracked=target_attr.num_batches_tracked
-                    # )
                     )
     for n, ch in m.named_children():
-        replace_bn_with_brn(ch, n, momentum, r_d_max_inc_step)
+        replace_bn_with_brn(ch, n, momentum, r_d_max_inc_step, r_max, d_max,
+                            max_r_max, max_d_max)
 
 def change_brn_pars(
         m, name="", momentum=0.1, r_d_max_inc_step=0.0001, r_max=1.0,
@@ -482,7 +476,7 @@ def change_brn_pars(
             target_attr.r_d_max_inc_step = r_d_max_inc_step
 
     for n, ch in m.named_children():
-        change_brn_pars(ch, n, momentum, r_d_max_inc_step)
+        change_brn_pars(ch, n, momentum, r_d_max_inc_step, r_max, d_max)
 
 def consolidate_weights(model, cur_clas):
     """ Mean-shift for the target layer weights"""
@@ -553,6 +547,17 @@ def set_brn_to_train(m, name=""):
                 # print("setting to train..")
         for n, ch in m.named_children():
             set_brn_to_train(ch, n)
+
+
+def freeze_up_to(model, freeze_below_layer):
+    for name, param in model.named_parameters():
+        # tells whether we want to use gradients for a given parameter
+        if "bn" not in name:
+            param.requires_grad = False
+            print("Freezing parameter " + name)
+        if name == freeze_below_layer:
+            break
+
 
 if __name__ == "__main__":
 

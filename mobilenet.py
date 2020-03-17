@@ -157,6 +157,8 @@ class MyMobilenetV1(nn.Module):
         # remove_sequential(model, all_layers)
         # print(all_layers)
         #print(list(model.features))
+        # for name, param in model.named_parameters():
+        #     print(name)
 
         lat_list = []
         end_list = []
