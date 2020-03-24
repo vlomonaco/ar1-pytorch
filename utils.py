@@ -548,6 +548,14 @@ def set_brn_to_train(m, name=""):
         for n, ch in m.named_children():
             set_brn_to_train(ch, n)
 
+def set_brn_to_eval(m, name=""):
+    for attr_str in dir(m):
+        target_attr = getattr(m, attr_str)
+        if type(target_attr) == BatchRenormalization2D:
+            target_attr.eval()
+            # print("setting to train..")
+    for n, ch in m.named_children():
+        set_brn_to_train(ch, n)
 
 def freeze_up_to(model, freeze_below_layer):
     for name, param in model.named_parameters():
@@ -557,6 +565,13 @@ def freeze_up_to(model, freeze_below_layer):
             print("Freezing parameter " + name)
         if name == freeze_below_layer:
             break
+
+def freeze_dw(model):
+    for name, param in model.named_parameters():
+        # tells whether we want to use gradients for a given parameter
+        if "dw_conv.conv" in name:
+            param.requires_grad = False
+            print("Freezing parameter " + name)
 
 
 if __name__ == "__main__":

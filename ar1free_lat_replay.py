@@ -29,7 +29,8 @@ from mobilenet import MyMobilenetV1
 from utils import preprocess_imgs, pad_data, shuffle_in_unison, maybe_cuda,\
     get_accuracy, reset_weights, consolidate_weights, \
     set_consolidate_weights, examples_per_class, replace_bn_with_brn, \
-    set_brn_to_train, change_brn_pars, shuffle_in_unison_pytorch, freeze_up_to
+    set_brn_to_train, change_brn_pars, shuffle_in_unison_pytorch, \
+    freeze_up_to, freeze_dw
 import tensorflow as tf
 
 # Hardware setup
@@ -39,24 +40,25 @@ os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
 # hyperparams
 init_lr = 0.001
-inc_lr = 0.001
+inc_lr = 0.00005
 mb_size = 128
 init_train_ep = 4
 inc_train_ep = 4
 init_update_rate = 0.01
-inc_update_rate = 0.0001
+inc_update_rate = 0.00005
 max_r_max = 1.25
 max_d_max = 0.5
 inc_step = 4.1e-05
 rm_sz = 1500
-momentum = 0.12
+momentum = 0.9
 l2 = 0.0005
-freeze_below_layer = "lat_features.4.unit6.pw_conv.bn.beta"
+freeze_below_layer = "lat_features.19.bn.beta"
+latent_layer_num = 19
 rm = None
 
 # Tensorboard setup
-exp_name = "ar1free_brn_lat_rep_1500_v19"
-comment = ""
+exp_name = "ar1free_brn_lat_rep_1500_real_v32"
+comment = "run 1 to check variability"
 
 log_dir = 'logs/' + exp_name
 summary_writer = tf.summary.create_file_writer(log_dir)
@@ -70,11 +72,12 @@ preproc = preprocess_imgs
 test_x, test_y = dataset.get_test_set()
 
 # Model
-model = MyMobilenetV1(pretrained=True)
+model = MyMobilenetV1(pretrained=True, latent_layer_num=latent_layer_num)
 replace_bn_with_brn(
     model, momentum=init_update_rate, r_d_max_inc_step=inc_step,
     max_r_max=max_r_max, max_d_max=max_d_max
 )
+freeze_dw(model)
 
 model.saved_weights = {}
 model.past_j = {i:0 for i in range(50)}
@@ -102,6 +105,7 @@ hyper = json.dumps(
         "max_d_max": max_d_max,
         "r_d_inc_step": inc_step,
         "freeze_below_layer": freeze_below_layer,
+        "latent_layer_num": latent_layer_num,
         "comment": comment
     }
 )
@@ -135,11 +139,10 @@ for i, train_batch in enumerate(dataset):
     print("train_x shape: {}, train_y shape: {}"
           .format(train_x.shape, train_y.shape))
 
-    # model.eval()
-    # model.end_features.train()
-    # set_brn_to_train(model)
-    # model.output.train()
-    model.train()
+    model.eval()
+    model.end_features.train()
+    model.output.train()
+    # model.train()
 
     reset_weights(model, cur_class)
     cur_ep = 0
@@ -199,7 +202,7 @@ for i, train_batch in enumerate(dataset):
                 x_mb, latent_input=lat_mb_x, return_lat_acts=True)
 
             # collect latent volumes only for the first ep
-            if ep == 0:
+            if i != 0 and ep == 0:
                 lat_acts = lat_acts.cpu().detach()
                 if it == 0:
                     cur_acts = copy.deepcopy(lat_acts)
@@ -236,6 +239,25 @@ for i, train_batch in enumerate(dataset):
 
     consolidate_weights(model, cur_class)
 
+    # extra forward for first batch
+    if i == 0:
+        model.eval()
+        for it in range(it_x_ep):
+            # print(it)
+            start = it * mb_size
+            end = (it + 1) * mb_size
+
+            with torch.no_grad():
+
+                x_mb = maybe_cuda(train_x[start:end], use_cuda=use_cuda)
+                _, lat_acts = model(x_mb, return_lat_acts=True)
+                lat_acts = lat_acts.cpu().detach()
+
+                if it == 0:
+                    cur_acts = copy.deepcopy(lat_acts)
+                else:
+                    cur_acts = torch.cat((cur_acts, lat_acts), 0)
+
     # how many patterns to save for next iter
     h = min(rm_sz // (i + 1), cur_acts.size(0))
     print("h", h)
@@ -257,6 +279,8 @@ for i, train_batch in enumerate(dataset):
         for j, idx in enumerate(idxs_2_replace):
             rm[0][idx] = copy.deepcopy(rm_add[0][j])
             rm[1][idx] = copy.deepcopy(rm_add[1][j])
+
+    rm = shuffle_in_unison_pytorch(rm)
 
     set_consolidate_weights(model)
     ave_loss, acc, accs = get_accuracy(

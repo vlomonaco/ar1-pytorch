@@ -25,7 +25,8 @@ from mobilenet import MyMobilenetV1
 from utils import preprocess_imgs, pad_data, shuffle_in_unison, maybe_cuda,\
     get_accuracy, reset_weights, consolidate_weights, \
     set_consolidate_weights, examples_per_class, replace_bn_with_brn, \
-    set_brn_to_train, change_brn_pars, shuffle_in_unison_pytorch, freeze_up_to
+    set_brn_to_train, change_brn_pars, shuffle_in_unison_pytorch, \
+    freeze_up_to, freeze_dw
 import tensorflow as tf
 
 # Hardware setup
@@ -47,15 +48,12 @@ inc_step = 4.1e-05
 rm_sz = 1500
 momentum = 0.9
 l2 = 0.0005
-# freeze_below_layer = "lat_features.4.unit6.pw_conv.bn.beta"
-# freeze_below_layer = "lat_features.1.unit1.pw_conv.bn.beta"
-freeze_below_layer = "lat_features.4.unit5.dw_conv.conv.weight"
-# freeze_below_layer = None
+freeze_below_layer = "lat_features.10.dw_conv.conv.weight"
 rm = None
 
 # Tensorboard setup
-exp_name = "ar1free_brn_native_rehe_1500_fzn_v2"
-comment = ""
+exp_name = "ar1free_brn_native_rehe_1500_bal_v1"
+comment = "new latent layer"
 
 log_dir = 'logs/' + exp_name
 summary_writer = tf.summary.create_file_writer(log_dir)
@@ -74,6 +72,7 @@ replace_bn_with_brn(
     model, momentum=init_update_rate, r_d_max_inc_step=inc_step,
     max_r_max=max_r_max, max_d_max=max_d_max
 )
+
 model.saved_weights = {}
 model.past_j = {i:0 for i in range(50)}
 model.cur_j = {i:0 for i in range(50)}
@@ -123,30 +122,12 @@ for i, train_batch in enumerate(dataset):
     train_x, train_y = train_batch
     train_x = preproc(train_x)
 
-    # saving patterns for next iter
-    h = min(rm_sz // (i + 1), train_x.shape[0])
-    # h = rm_sz // (i + 1)
-    print("h", h)
-    print("train x sz: ", train_x.shape[0])
-
-    idxs_cur = np.random.choice(
-        train_x.shape[0], h, replace=False
-    )
-    # idxs_cur = np.random.choice(
-    #     train_x.shape[0], h, replace=True
-    # )
-    rm_add = [train_x[idxs_cur], train_y[idxs_cur]]
-
-    print("rm_add size", rm_add[0].shape[0])
-
-    # adding eventual replay patterns to the current batch
-    if i > 0:
-        print("rm size", rm[0].shape[0])
-        train_x = np.concatenate((train_x, rm[0]))
-        train_y = np.concatenate((train_y, rm[1]))
-
-    cur_class = [int(o) for o in set(train_y)]
-    model.cur_j = examples_per_class(train_y)
+    if i == 0:
+        cur_class = [int(o) for o in set(train_y)]
+        model.cur_j = examples_per_class(train_y)
+    else:
+        cur_class = [int(o) for o in set(train_y).union(set(rm[1]))]
+        model.cur_j = examples_per_class(list(train_y) + list(rm[1]))
 
     print("----------- batch {0} -------------".format(i))
     print("train_x shape: {}, train_y shape: {}"
@@ -161,7 +142,8 @@ for i, train_batch in enumerate(dataset):
     reset_weights(model, cur_class)
     cur_ep = 0
 
-    (train_x, train_y), it_x_ep = pad_data([train_x, train_y], mb_size)
+    if i == 0:
+        (train_x, train_y), it_x_ep = pad_data([train_x, train_y], mb_size)
     shuffle_in_unison([train_x, train_y], in_place=True)
 
     model = maybe_cuda(model, use_cuda=use_cuda)
@@ -181,16 +163,39 @@ for i, train_batch in enumerate(dataset):
         print("training ep: ", ep)
         correct_cnt, ave_loss = 0, 0
 
+        if i > 0:
+            it_x_ep = train_x.size(0) // 21
+            n2inject = 107
+        else:
+            n2inject = 0
+        print("total sz:", train_x.size(0) + rm_sz)
+        print("n2inject", n2inject)
+        print("it x ep: ", it_x_ep)
+
         for it in range(it_x_ep):
 
-            start = it * mb_size
-            end = (it + 1) * mb_size
+            start = it * (mb_size - n2inject)
+            end = (it + 1) * (mb_size - n2inject)
 
             optimizer.zero_grad()
 
             x_mb = maybe_cuda(train_x[start:end], use_cuda=use_cuda)
-            y_mb = maybe_cuda(train_y[start:end], use_cuda=use_cuda)
 
+            if i == 0:
+                y_mb = maybe_cuda(train_y[start:end], use_cuda=use_cuda)
+
+            else:
+                rep_mb_x = maybe_cuda(
+                    rm[0][it*n2inject: (it + 1)*n2inject], use_cuda=use_cuda)
+                rep_mb_y = rm[1][it*n2inject: (it + 1)*n2inject]
+                x_mb = maybe_cuda(
+                    torch.cat((x_mb, rep_mb_x), 0),
+                    use_cuda=use_cuda)
+                y_mb = maybe_cuda(
+                    torch.cat((train_y[start:end], rep_mb_y), 0),
+                    use_cuda=use_cuda)
+
+            # x_mb, y_mb = shuffle_in_unison_pytorch([x_mb, y_mb])
             logits = model(x_mb)
 
             _, pred_label = torch.max(logits, 1)
@@ -223,6 +228,18 @@ for i, train_batch in enumerate(dataset):
 
     consolidate_weights(model, cur_class)
 
+    # saving patterns for next iter
+    h = min(rm_sz // (i + 1), train_x.shape[0])
+    print("h", h)
+    print("train x sz: ", train_x.shape[0])
+
+    idxs_cur = np.random.choice(
+        train_x.shape[0], h, replace=False
+    )
+    rm_add = [train_x[idxs_cur], train_y[idxs_cur]]
+
+    print("rm_add size", rm_add[0].shape[0])
+
     # replace patterns in random memory
     if i == 0:
         rm = copy.deepcopy(rm_add)
@@ -240,7 +257,7 @@ for i, train_batch in enumerate(dataset):
         model, criterion, mb_size, test_x, test_y, preproc=preproc
     )
 
-    # 1. Log scalar values (scalar summary) to TB
+    # Log scalar values (scalar summary) to TB
     with summary_writer.as_default():
         tf.summary.scalar('test_loss', ave_loss, step=i)
         tf.summary.scalar('test_accuracy', acc, step=i)
