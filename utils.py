@@ -23,9 +23,7 @@ from __future__ import absolute_import
 
 import numpy as np
 import torch
-from torch.autograd import Variable
-from batch_renormalization import BatchRenormalization2D
-from batch_renorm import BatchRenorm2d
+from models.batch_renormalization import BatchRenormalization2D
 
 
 def shuffle_in_unison(dataset, seed=None, in_place=False):
@@ -176,111 +174,6 @@ def get_accuracy(model, criterion, batch_size, test_x, test_y, use_cuda=True,
 
     return ave_loss, acc, accs
 
-
-def train_net(optimizer, model, criterion, mb_size, x, y, t,
-              train_ep, preproc=None, use_cuda=True, mask=None,
-              record_stats=False):
-    """
-    Train a Pytorch model from pre-loaded tensors.
-
-        Args:
-            optimizer (object): the pytorch optimizer.
-            model (object): the pytorch model to train.
-            criterion (func): loss function.
-            mb_size (int): mini-batch size.
-            x (tensor): train data.
-            y (tensor): train labels.
-            t (int): task label.
-            train_ep (int): number of training epochs.
-            preproc (func): test iterations.
-            use_cuda (bool): if we want to use gpu or cpu.
-            mask (bool): if we want to maks out some classes from the results.
-            record_stats (bool): if we want to save collect sparsity stats.
-        Returns:
-            ave_loss (float): average loss across the train set.
-            acc (float): average accuracy over training.
-            stats (dict): dictionary of several stats collected.
-    """
-
-    cur_ep = 0
-    cur_train_t = t
-    stats = {'perc_on_avg': [], 'perc_on_std': [], 'on_idxs': []}
-
-    if preproc:
-        x = preproc(x)
-
-    (train_x, train_y), it_x_ep = pad_data(
-        [x, y], mb_size
-    )
-
-    shuffle_in_unison(
-        [train_x, train_y], 0, in_place=True
-    )
-
-    model = maybe_cuda(model, use_cuda=use_cuda)
-    acc = None
-    ave_loss = 0
-
-    train_x = torch.from_numpy(train_x).type(torch.FloatTensor)
-    train_y = torch.from_numpy(train_y).type(torch.LongTensor)
-
-    for ep in range(train_ep):
-
-        model.active_perc_list = []
-        model.train()
-
-        print("training ep: ", ep)
-        correct_cnt, ave_loss = 0, 0
-        for it in range(it_x_ep):
-
-            start = it * mb_size
-            end = (it + 1) * mb_size
-
-            optimizer.zero_grad()
-
-            x_mb = maybe_cuda(train_x[start:end], use_cuda=use_cuda)
-            y_mb = maybe_cuda(train_y[start:end], use_cuda=use_cuda)
-            logits = model(x_mb)
-
-            _, pred_label = torch.max(logits, 1)
-            correct_cnt += (pred_label == y_mb).sum()
-
-            loss = criterion(logits, y_mb)
-            ave_loss += loss.item()
-
-            loss.backward()
-            optimizer.step()
-
-            acc = correct_cnt.item() / \
-                  ((it + 1) * y_mb.size(0))
-            ave_loss /= ((it + 1) * y_mb.size(0))
-
-            if it % 100 == 0:
-                print(
-                    '==>>> it: {}, avg. loss: {:.6f}, '
-                    'running train acc: {:.3f}'
-                        .format(it, ave_loss, acc)
-                )
-
-        cur_ep += 1
-
-        if record_stats:
-            perc_on_avg = np.mean(model.active_perc_list)
-            perc_on_std = np.std(model.active_perc_list)
-
-            print(
-                "Average active units: {}%, std {}%: "
-                .format(perc_on_avg, perc_on_std)
-            )
-
-            stats['perc_on_avg'].append(perc_on_avg)
-            stats['perc_on_std'].append(perc_on_std)
-
-    stats['on_idxs'] = model.on_idxs
-
-    return ave_loss, acc, stats
-
-
 def preprocess_imgs(img_batch, scale=True, norm=True, channel_first=True):
     """
     Here we get a batch of PIL imgs and we return them normalized as for
@@ -329,103 +222,6 @@ def maybe_cuda(what, use_cuda=True, **kw):
         what = what.cuda()
     return what
 
-
-def test_multitask(
-        model, test_set, mb_size, preproc=None, use_cuda=True, multi_heads=[],
-        mask=False):
-    """
-    Test a model considering that the test set is composed of multiple tests
-    one for each task.
-
-        Args:
-            model (nn.Module): the pytorch model to test.
-            test_set (list): list of (x,y,t) test tuples.
-            mb_size (int): mini-batch size.
-            preproc (func): image preprocess function.
-            use_cuda (bool): if we want to use gpu or cpu.
-            mask (bool): if we want to maks out some classes from the results.
-            multi_heads (list): ordered list of "heads" to be used for each
-                                task.
-        Returns:
-            stats (float): collected stasts of the test including average and
-                           per class accuracies.
-    """
-
-    model.eval()
-
-    acc_x_task = []
-    stats = {'accs': []}
-
-    for (x, y), t in test_set:
-
-        # reduce test set 20 substampling
-        # idx = range(0, y.shape[0], 20)
-        # x = np.take(x, idx, axis=0)
-        # y = np.take(y, idx, axis=0)
-
-        if preproc:
-            x = preproc(x)
-
-        (test_x, test_y), it_x_ep = pad_data(
-            [x, y], mb_size
-        )
-
-        if multi_heads != [] and len(multi_heads) > t:
-            # we can use the stored head
-            print("Using head: ", t)
-            model.classifier = multi_heads[t]
-
-        model = maybe_cuda(model, use_cuda=use_cuda)
-        acc = None
-
-        test_x = torch.from_numpy(test_x).type(torch.FloatTensor)
-        test_y = torch.from_numpy(test_y).type(torch.LongTensor)
-
-        correct_cnt, ave_loss = 0, 0
-
-        with torch.no_grad():
-
-            minclass = np.min(y)
-            maxclass = np.max(y)
-
-            for it in range(it_x_ep):
-
-                start = it * mb_size
-                end = (it + 1) * mb_size
-
-                x_mb = maybe_cuda(test_x[start:end], use_cuda=use_cuda)
-                y_mb = maybe_cuda(test_y[start:end], use_cuda=use_cuda)
-                logits = model(x_mb)
-
-                if mask:
-                    totclass = logits.size(1)
-                    mymask = np.asarray([0] * totclass)
-                    mymask[minclass:maxclass+1] = 1
-                    mymask = maybe_cuda(torch.from_numpy(mymask),
-                                        use_cuda=use_cuda)
-                    # print(mymask)
-                    logits = mymask * logits
-
-                _, pred_label = torch.max(logits, 1)
-                correct_cnt += (pred_label == y_mb).sum()
-
-            acc = correct_cnt.item() / test_y.shape[0]
-
-        print('TEST Acc. Task {}==>>> acc: {:.3f}'.format(t, acc))
-        acc_x_task.append(acc)
-        stats['accs'].append(acc)
-
-    print("------------------------------------------")
-    print("Avg. acc:", np.mean(acc_x_task))
-    print("------------------------------------------")
-
-    # reset the head for the next batch
-    if multi_heads:
-        print("classifier reset...")
-        model.reset_classifier()
-
-    return stats
-
 def replace_bn_with_brn(
         m, name="", momentum=0.1, r_d_max_inc_step=0.0001, r_max=1.0,
         d_max=0.0, max_r_max=3.0, max_d_max=5.0):
@@ -448,17 +244,6 @@ def replace_bn_with_brn(
                         max_r_max=max_r_max,
                         max_d_max=max_d_max
                         )
-                    # BatchRenormalization2D(target_attr.num_features)
-                    # BatchRenorm2d(
-                    #     target_attr.num_features,
-                    #     weight=target_attr.weight,
-                    #     bias=target_attr.bias,
-                    #     running_mean=target_attr.running_mean,
-                    #     running_std=target_attr.running_var,
-                    #     eps=target_attr.eps,
-                    #     momentum=target_attr.momentum,
-                    #     num_batches_tracked=target_attr.num_batches_tracked
-                    #     )
                     )
     for n, ch in m.named_children():
         replace_bn_with_brn(ch, n, momentum, r_d_max_inc_step, r_max, d_max,
@@ -566,17 +351,9 @@ def freeze_up_to(model, freeze_below_layer):
         if name == freeze_below_layer:
             break
 
-def freeze_dw(model):
-    for name, param in model.named_parameters():
-        # tells whether we want to use gradients for a given parameter
-        if "dw_conv.conv" in name:
-            param.requires_grad = False
-            print("Freezing parameter " + name)
-
-
 if __name__ == "__main__":
 
-    from mobilenet import MyMobilenetV1
+    from models.mobilenet_v1 import MyMobilenetV1
     model = MyMobilenetV1(pretrained=True)
 
     replace_bn_with_brn(model, "net")

@@ -22,21 +22,27 @@ from data_loader import CORE50
 import torch
 import numpy as np
 import copy
-import datetime
 import os
 import json
-from mobilenet import MyMobilenetV1
+from models.mobilenet import MyMobilenetV1
 from utils import preprocess_imgs, pad_data, shuffle_in_unison, maybe_cuda,\
     get_accuracy, reset_weights, consolidate_weights, \
-    set_consolidate_weights, examples_per_class, replace_bn_with_brn, \
-    set_brn_to_train, change_brn_pars, shuffle_in_unison_pytorch, \
-    freeze_up_to, freeze_dw
+    set_consolidate_weights, examples_per_class, replace_bn_with_brn,\
+    change_brn_pars, freeze_up_to
 import tensorflow as tf
+
+# --------------------------------- Setup --------------------------------------
 
 # Hardware setup
 use_cuda = True
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"]="0"
+
+# Tensorboard setup
+exp_name = "test"
+comment = ""
+log_dir = 'logs/' + exp_name
+summary_writer = tf.summary.create_file_writer(log_dir)
 
 # hyperparams
 init_lr = 0.001
@@ -56,12 +62,20 @@ freeze_below_layer = "lat_features.19.bn.beta"
 latent_layer_num = 19
 rm = None
 
-# Tensorboard setup
-exp_name = "ar1free_brn_lat_rep_1500_real_v32"
-comment = "run 1 to check variability"
+# Saving hyper
+hyper = json.dumps({
+        "mb_size": mb_size, "inc_train_ep": inc_train_ep, "init_train_ep":
+        inc_train_ep, "init_lr": init_lr, "inc_lr": inc_lr, "rm_size": rm_sz,
+        "init_update_rate": init_update_rate, "inc_update_rate":
+         inc_update_rate, "momentum": momentum, "l2": l2, "max_r_max":
+         max_r_max, "max_d_max": max_d_max, "r_d_inc_step": inc_step,
+        "freeze_below_layer": freeze_below_layer, "latent_layer_num":
+         latent_layer_num, "comment": comment})
 
-log_dir = 'logs/' + exp_name
-summary_writer = tf.summary.create_file_writer(log_dir)
+with summary_writer.as_default():
+    tf.summary.text("hyperparameters", hyper, step=0)
+
+# Other variables init
 tot_it_step = 0
 
 # Create the dataset object
@@ -71,47 +85,23 @@ preproc = preprocess_imgs
 # Get the fixed test set
 test_x, test_y = dataset.get_test_set()
 
-# Model
+# Model setup
 model = MyMobilenetV1(pretrained=True, latent_layer_num=latent_layer_num)
 replace_bn_with_brn(
     model, momentum=init_update_rate, r_d_max_inc_step=inc_step,
     max_r_max=max_r_max, max_d_max=max_d_max
 )
-freeze_dw(model)
-
 model.saved_weights = {}
 model.past_j = {i:0 for i in range(50)}
 model.cur_j = {i:0 for i in range(50)}
 
+# Optimizer setup
 optimizer = torch.optim.SGD(
     model.parameters(), lr=init_lr, momentum=momentum, weight_decay=l2
 )
 criterion = torch.nn.CrossEntropyLoss()
 
-# Saving hyper
-hyper = json.dumps(
-    {
-        "mb_size": mb_size,
-        "inc_train_ep": inc_train_ep,
-        "init_train_ep": inc_train_ep,
-        "init_lr": init_lr,
-        "inc_lr": inc_lr,
-        "rm_size": rm_sz,
-        "init_update_rate": init_update_rate,
-        "inc_update_rate": inc_update_rate,
-        "momentum": momentum,
-        "l2": l2,
-        "max_r_max": max_r_max,
-        "max_d_max": max_d_max,
-        "r_d_inc_step": inc_step,
-        "freeze_below_layer": freeze_below_layer,
-        "latent_layer_num": latent_layer_num,
-        "comment": comment
-    }
-)
-
-with summary_writer.as_default():
-    tf.summary.text("hyperparameters", hyper, step=0)
+# --------------------------------- Training -----------------------------------
 
 # loop over the training incremental batches
 for i, train_batch in enumerate(dataset):
@@ -142,7 +132,6 @@ for i, train_batch in enumerate(dataset):
     model.eval()
     model.end_features.train()
     model.output.train()
-    # model.train()
 
     reset_weights(model, cur_class)
     cur_ep = 0
@@ -169,8 +158,9 @@ for i, train_batch in enumerate(dataset):
         correct_cnt, ave_loss = 0, 0
 
         if i > 0:
-            it_x_ep = train_x.size(0) // 21
-            n2inject = 107
+            cur_sz = train_x.size(0) // ((train_x.size(0) + rm_sz) // mb_size)
+            it_x_ep = train_x.size(0) // cur_sz
+            n2inject = mb_size - cur_sz
         else:
             n2inject = 0
         print("total sz:", train_x.size(0) + rm_sz)
@@ -202,7 +192,7 @@ for i, train_batch in enumerate(dataset):
                 x_mb, latent_input=lat_mb_x, return_lat_acts=True)
 
             # collect latent volumes only for the first ep
-            if i != 0 and ep == 0:
+            if ep == 0:
                 lat_acts = lat_acts.cpu().detach()
                 if it == 0:
                     cur_acts = copy.deepcopy(lat_acts)
@@ -239,25 +229,6 @@ for i, train_batch in enumerate(dataset):
 
     consolidate_weights(model, cur_class)
 
-    # extra forward for first batch
-    if i == 0:
-        model.eval()
-        for it in range(it_x_ep):
-            # print(it)
-            start = it * mb_size
-            end = (it + 1) * mb_size
-
-            with torch.no_grad():
-
-                x_mb = maybe_cuda(train_x[start:end], use_cuda=use_cuda)
-                _, lat_acts = model(x_mb, return_lat_acts=True)
-                lat_acts = lat_acts.cpu().detach()
-
-                if it == 0:
-                    cur_acts = copy.deepcopy(lat_acts)
-                else:
-                    cur_acts = torch.cat((cur_acts, lat_acts), 0)
-
     # how many patterns to save for next iter
     h = min(rm_sz // (i + 1), cur_acts.size(0))
     print("h", h)
@@ -280,8 +251,6 @@ for i, train_batch in enumerate(dataset):
             rm[0][idx] = copy.deepcopy(rm_add[0][j])
             rm[1][idx] = copy.deepcopy(rm_add[1][j])
 
-    rm = shuffle_in_unison_pytorch(rm)
-
     set_consolidate_weights(model)
     ave_loss, acc, accs = get_accuracy(
         model, criterion, mb_size, test_x, test_y, preproc=preproc
@@ -295,12 +264,6 @@ for i, train_batch in enumerate(dataset):
     # update number examples encountered over time
     for c, n in model.cur_j.items():
         model.past_j[c] += n
-
-    print("past_j:", model.past_j)
-    count = [0] * 50
-    for j in rm[1]:
-        count[int(j)] +=1
-    print(count)
 
     print("---------------------------------")
     print("Accuracy: ", acc)

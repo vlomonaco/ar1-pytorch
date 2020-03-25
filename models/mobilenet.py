@@ -17,9 +17,10 @@ __all__ = ['MobileNet', 'mobilenet_w1', 'mobilenet_w3d4', 'mobilenet_wd2', 'mobi
            'fdmobilenet_w3d4', 'fdmobilenet_wd2', 'fdmobilenet_wd4']
 
 import os
+import torch
 import torch.nn as nn
 import torch.nn.init as init
-from common import conv1x1_block, conv3x3_block, dwconv3x3_block
+from models.common import conv1x1_block, conv3x3_block, dwconv3x3_block
 
 
 class DwsConvBlock(nn.Module):
@@ -130,6 +131,75 @@ class MobileNet(nn.Module):
         x = self.output(x)
         return x
 
+def remove_sequential(network, all_layers):
+
+    for layer in network.children():
+        if isinstance(layer, nn.Sequential): # if sequential layer, apply recursively to layers in sequential layer
+            #print(layer)
+            remove_sequential(layer, all_layers)
+        else: # if leaf node, add it to list
+            # print(layer)
+            all_layers.append(layer)
+
+def remove_DwsConvBlock(cur_layers):
+
+    all_layers = []
+    for layer in cur_layers:
+        if isinstance(layer, DwsConvBlock):
+           #  print("helloooo: ", layer)
+            for ch in layer.children():
+                all_layers.append(ch)
+        else:
+            all_layers.append(layer)
+    return all_layers
+
+
+class MyMobilenetV1(nn.Module):
+    def __init__(self, pretrained=True, latent_layer_num=20):
+        super().__init__()
+
+        model = mobilenet_w1(pretrained=pretrained)
+        model.features.final_pool = nn.AvgPool2d(4)
+
+        all_layers = []
+        remove_sequential(model, all_layers)
+        print(all_layers)
+        all_layers = remove_DwsConvBlock(all_layers)
+        print(all_layers)
+
+        lat_list = []
+        end_list = []
+
+        for i, layer in enumerate(all_layers[:-1]):
+            if i <= latent_layer_num:
+                lat_list.append(layer)
+            else:
+                end_list.append(layer)
+
+        self.lat_features = nn.Sequential(*lat_list)
+        self.end_features = nn.Sequential(*end_list)
+
+        self.output = nn.Linear(1024, 50, bias=False)
+
+
+    def forward(self, x, latent_input=None, return_lat_acts=False):
+
+        if latent_input is not None:
+            with torch.no_grad():
+                orig_acts = self.lat_features(x)
+            lat_acts = torch.cat((orig_acts, latent_input), 0)
+        else:
+            orig_acts = self.lat_features(x)
+            lat_acts = orig_acts
+
+        x = self.end_features(lat_acts)
+        x = x.view(x.size(0), -1)
+        logits = self.output(x)
+
+        if return_lat_acts:
+            return logits, orig_acts
+        else:
+            return logits
 
 def get_mobilenet(version,
                   width_scale,
@@ -174,7 +244,7 @@ def get_mobilenet(version,
     if pretrained:
         if (model_name is None) or (not model_name):
             raise ValueError("Parameter `model_name` should be properly initialized for loading pretrained model.")
-        from model_store import download_model
+        from models.model_store import download_model
         download_model(
             net=net,
             model_name=model_name,
@@ -302,6 +372,13 @@ def fdmobilenet_wd4(**kwargs):
     """
     return get_mobilenet(version="fd", width_scale=0.25, model_name="fdmobilenet_wd4", **kwargs)
 
+def mobilenet_v1_core50():
+
+    model = mobilenet_w1(pretrained=True)
+    model.features.final_pool = nn.AvgPool2d(4)
+    model.output = nn.Linear(1024, 50, bias=False)
+
+    return model
 
 def _calc_width(net):
     import numpy as np
@@ -353,4 +430,6 @@ def _test():
 
 if __name__ == "__main__":
 
-    model = mobilenet_w1(pretrained=True)
+    model = MyMobilenetV1(pretrained=True)
+    for name, param in model.named_parameters():
+        print(name)
