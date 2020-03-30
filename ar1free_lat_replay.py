@@ -25,10 +25,7 @@ import copy
 import os
 import json
 from models.mobilenet import MyMobilenetV1
-from utils import preprocess_imgs, pad_data, shuffle_in_unison, maybe_cuda,\
-    get_accuracy, reset_weights, consolidate_weights, \
-    set_consolidate_weights, examples_per_class, replace_bn_with_brn,\
-    change_brn_pars, freeze_up_to
+from utils import *
 import tensorflow as tf
 
 # --------------------------------- Setup --------------------------------------
@@ -39,14 +36,14 @@ os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
 # Tensorboard setup
-exp_name = "test"
+exp_name = "test_ewc_loss_0_v5"
 comment = ""
 log_dir = 'logs/' + exp_name
 summary_writer = tf.summary.create_file_writer(log_dir)
 
 # hyperparams
 init_lr = 0.001
-inc_lr = 0.00005
+inc_lr = 0.002
 mb_size = 128
 init_train_ep = 4
 inc_train_ep = 4
@@ -55,11 +52,13 @@ inc_update_rate = 0.00005
 max_r_max = 1.25
 max_d_max = 0.5
 inc_step = 4.1e-05
-rm_sz = 1500
+rm_sz = 0
 momentum = 0.9
 l2 = 0.0005
 freeze_below_layer = "lat_features.19.bn.beta"
 latent_layer_num = 19
+ewc_lambda = 1e6
+# ewc_lambda = 0
 rm = None
 
 # Saving hyper
@@ -70,7 +69,7 @@ hyper = json.dumps({
          inc_update_rate, "momentum": momentum, "l2": l2, "max_r_max":
          max_r_max, "max_d_max": max_d_max, "r_d_inc_step": inc_step,
         "freeze_below_layer": freeze_below_layer, "latent_layer_num":
-         latent_layer_num, "comment": comment})
+         latent_layer_num, "ewc_lambda":ewc_lambda, "comment": comment})
 
 with summary_writer.as_default():
     tf.summary.text("hyperparameters", hyper, step=0)
@@ -94,6 +93,7 @@ replace_bn_with_brn(
 model.saved_weights = {}
 model.past_j = {i:0 for i in range(50)}
 model.cur_j = {i:0 for i in range(50)}
+ewcData, synData = create_syn_data(model)
 
 # Optimizer setup
 optimizer = torch.optim.SGD(
@@ -105,6 +105,8 @@ criterion = torch.nn.CrossEntropyLoss()
 
 # loop over the training incremental batches
 for i, train_batch in enumerate(dataset):
+
+    init_batch(model, ewcData, synData)
 
     if i == 1:
         freeze_up_to(model, freeze_below_layer)
@@ -160,7 +162,7 @@ for i, train_batch in enumerate(dataset):
         if i > 0:
             cur_sz = train_x.size(0) // ((train_x.size(0) + rm_sz) // mb_size)
             it_x_ep = train_x.size(0) // cur_sz
-            n2inject = mb_size - cur_sz
+            n2inject = max(0, mb_size - cur_sz)
         else:
             n2inject = 0
         print("total sz:", train_x.size(0) + rm_sz)
@@ -168,7 +170,9 @@ for i, train_batch in enumerate(dataset):
         print("it x ep: ", it_x_ep)
 
         for it in range(it_x_ep):
-            # print(it)
+
+            pre_update(model, synData)
+
             start = it * (mb_size - n2inject)
             end = (it + 1) * (mb_size - n2inject)
 
@@ -203,10 +207,13 @@ for i, train_batch in enumerate(dataset):
             correct_cnt += (pred_label == y_mb).sum()
 
             loss = criterion(logits, y_mb)
+            loss += compute_ewc_loss(model, ewcData, lambd=ewc_lambda)
             ave_loss += loss.item()
 
             loss.backward()
             optimizer.step()
+
+            post_update(model, synData)
 
             acc = correct_cnt.item() / \
                   ((it + 1) * y_mb.size(0))
@@ -228,6 +235,7 @@ for i, train_batch in enumerate(dataset):
         cur_ep += 1
 
     consolidate_weights(model, cur_class)
+    update_ewc_data(model, ewcData, synData, 0.001, 1)
 
     # how many patterns to save for next iter
     h = min(rm_sz // (i + 1), cur_acts.size(0))

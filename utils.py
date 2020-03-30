@@ -351,12 +351,115 @@ def freeze_up_to(model, freeze_below_layer):
         if name == freeze_below_layer:
             break
 
+def create_syn_data(model):
+    size = 0
+    print('Creating Syn data for Optimal params and their Fisher info')
+
+    for name, param in model.named_parameters():
+        if "bn" not in name and "output" not in name:
+            print(name, param.flatten().size(0))
+            size += param.flatten().size(0)
+
+    # The first array returned is a 2D array: the first component contains
+    # the params at loss minimum, the second the parameter importance
+    # The second array is a dictionary with the synData
+    synData = {}
+    synData['old_theta'] = np.zeros(size, dtype=np.float32)
+    synData['new_theta'] = np.zeros(size, dtype=np.float32)
+    synData['grad'] = np.zeros(size, dtype=np.float32)
+    synData['trajectory'] = np.zeros(size, dtype=np.float32)
+    synData['cum_trajectory'] = np.zeros(size, dtype=np.float32)
+    return np.zeros((2, size), dtype=np.float32), synData
+
+
+def extract_weights(model, target):
+
+    with torch.no_grad():
+        weights_vector= None
+        for name, param in model.named_parameters():
+            if "bn" not in name and "output" not in name:
+                # print(name, param.flatten())
+                if weights_vector is None:
+                    weights_vector = param.flatten()
+                else:
+                    weights_vector = torch.cat(
+                        (weights_vector, param.flatten()), 0)
+
+        target[...] = weights_vector.cpu().numpy()
+
+
+def extract_grad(model, target):
+    # Store the gradients into target
+    with torch.no_grad():
+        grad_vector= None
+        for name, param in model.named_parameters():
+            if "bn" not in name and "output" not in name:
+                # print(name, param.flatten())
+                if grad_vector is None:
+                    grad_vector = param.grad.flatten()
+                else:
+                    grad_vector = torch.cat(
+                        (grad_vector, param.grad.flatten()), 0)
+
+        target[...] = grad_vector.cpu().numpy()
+
+
+def init_batch(net, ewcData, synData):
+    extract_weights(net, ewcData[0])  # Keep initial weights
+    synData['trajectory'] = 0
+
+
+def pre_update(net, synData):
+    extract_weights(net, synData['old_theta'])
+
+
+def post_update(net, synData):
+    extract_weights(net, synData['new_theta'])
+    extract_grad(net, synData['grad'])
+
+    synData['trajectory'] += synData['grad'] * (
+                    synData['new_theta'] - synData['old_theta'])
+
+
+def update_ewc_data(net, ewcData, synData, clip_to, c=0.0015):
+    extract_weights(net, synData['new_theta'])
+    eps = 0.0000001  # 0.001 in few task - 0.1 used in a more complex setup
+
+    synData['cum_trajectory'] += c * synData['trajectory'] / (
+                    np.square(synData['new_theta'] - ewcData[0]) + eps)
+
+    ewcData[1] = np.copy(-synData[
+        'cum_trajectory'])  # change sign here because the Ewc regularization
+    # in Caffe (theta - thetaold) is inverted w.r.t. syn equation [4]
+    # (thetaold - theta)
+    ewcData[1][ewcData[1] > clip_to] = clip_to
+    # (except CWR)
+    ewcData[0] = np.copy(synData['new_theta'])
+
+def compute_ewc_loss(model, ewcData, lambd=0):
+
+    weights_vector = None
+    for name, param in model.named_parameters():
+        if "bn" not in name and "output" not in name:
+            # print(name, param.flatten())
+            if weights_vector is None:
+                weights_vector = param.flatten()
+            else:
+                weights_vector = torch.cat(
+                    (weights_vector, param.flatten()), 0)
+
+    ewcData = torch.as_tensor(ewcData)
+    ewcData = maybe_cuda(ewcData, use_cuda=True)
+    loss = (lambd / 2) * torch.dot(ewcData[1], (weights_vector - ewcData[0])**2)
+    return loss
+
 if __name__ == "__main__":
 
-    from models.mobilenet_v1 import MyMobilenetV1
+    from models.mobilenet import MyMobilenetV1
     model = MyMobilenetV1(pretrained=True)
-
     replace_bn_with_brn(model, "net")
 
+    ewcData, synData = create_syn_data(model)
+    extract_weights(model, ewcData[0])
 
 

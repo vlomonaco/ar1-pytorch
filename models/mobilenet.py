@@ -163,9 +163,7 @@ class MyMobilenetV1(nn.Module):
 
         all_layers = []
         remove_sequential(model, all_layers)
-        print(all_layers)
         all_layers = remove_DwsConvBlock(all_layers)
-        print(all_layers)
 
         lat_list = []
         end_list = []
