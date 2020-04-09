@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 
 ################################################################################
-# Copyright (c) 2019. Vincenzo Lomonaco. All rights reserved.                  #
+# Copyright (c) 2020. Vincenzo Lomonaco. All rights reserved.                  #
 # See the accompanying LICENSE file for terms.                                 #
 #                                                                              #
-# Date: 23-07-2019                                                             #
+# Date: 01-04-2020                                                             #
 # Author: Vincenzo Lomonaco                                                    #
 # E-mail: vincenzo.lomonaco@unibo.it                                           #
 # Website: vincenzolomonaco.com                                                #
@@ -26,53 +26,59 @@ import os
 import json
 from models.mobilenet import MyMobilenetV1
 from utils import *
-import tensorflow as tf
+import configparser
+import argparse
+from pprint import pprint
+from torch.utils.tensorboard import SummaryWriter
 
 # --------------------------------- Setup --------------------------------------
 
-# Hardware setup
-use_cuda = True
-os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"]="0"
+# recover exp configuration name
+parser = argparse.ArgumentParser(description='Run CL experiments')
+parser.add_argument('--name', dest='exp_name',  default='DEFAULT',
+                    help='name of the experiment you want to run.')
+args = parser.parse_args()
 
-# Tensorboard setup
-exp_name = "test_ewc_loss_0_v5"
-comment = ""
+# set cuda device (based on your hardware)
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
+# recover config file for the experiment
+config = configparser.ConfigParser()
+config.read("params.cfg")
+exp_config = config[args.exp_name]
+print("Experiment name:", args.exp_name)
+pprint(dict(exp_config))
+
+# recover parameters from the cfg file and compute the dependent ones.
+exp_name = eval(exp_config['exp_name'])
+comment = eval(exp_config['comment'])
+use_cuda = eval(exp_config['use_cuda'])
+init_lr = eval(exp_config['init_lr'])
+inc_lr = eval(exp_config['inc_lr'])
+mb_size = eval(exp_config['mb_size'])
+init_train_ep = eval(exp_config['init_train_ep'])
+inc_train_ep = eval(exp_config['inc_train_ep'])
+init_update_rate = eval(exp_config['init_update_rate'])
+inc_update_rate = eval(exp_config['inc_update_rate'])
+max_r_max = eval(exp_config['max_r_max'])
+max_d_max = eval(exp_config['max_d_max'])
+inc_step = eval(exp_config['inc_step'])
+rm_sz = eval(exp_config['rm_sz'])
+momentum = eval(exp_config['momentum'])
+l2 = eval(exp_config['l2'])
+freeze_below_layer = eval(exp_config['freeze_below_layer'])
+latent_layer_num = eval(exp_config['latent_layer_num'])
+ewc_lambda = eval(exp_config['ewc_lambda'])
+rm = eval(exp_config['rm'])
+
+# setting up log dir for tensorboard
 log_dir = 'logs/' + exp_name
-summary_writer = tf.summary.create_file_writer(log_dir)
+writer = SummaryWriter(log_dir)
 
-# hyperparams
-init_lr = 0.001
-inc_lr = 0.002
-mb_size = 128
-init_train_ep = 4
-inc_train_ep = 4
-init_update_rate = 0.01
-inc_update_rate = 0.00005
-max_r_max = 1.25
-max_d_max = 0.5
-inc_step = 4.1e-05
-rm_sz = 0
-momentum = 0.9
-l2 = 0.0005
-freeze_below_layer = "lat_features.19.bn.beta"
-latent_layer_num = 19
-ewc_lambda = 1e6
-# ewc_lambda = 0
-rm = None
-
-# Saving hyper
-hyper = json.dumps({
-        "mb_size": mb_size, "inc_train_ep": inc_train_ep, "init_train_ep":
-        inc_train_ep, "init_lr": init_lr, "inc_lr": inc_lr, "rm_size": rm_sz,
-        "init_update_rate": init_update_rate, "inc_update_rate":
-         inc_update_rate, "momentum": momentum, "l2": l2, "max_r_max":
-         max_r_max, "max_d_max": max_d_max, "r_d_inc_step": inc_step,
-        "freeze_below_layer": freeze_below_layer, "latent_layer_num":
-         latent_layer_num, "ewc_lambda":ewc_lambda, "comment": comment})
-
-with summary_writer.as_default():
-    tf.summary.text("hyperparameters", hyper, step=0)
+# Saving params
+hyper = json.dumps(exp_config)
+writer.add_text("parameters", hyper, 0)
 
 # Other variables init
 tot_it_step = 0
@@ -93,7 +99,8 @@ replace_bn_with_brn(
 model.saved_weights = {}
 model.past_j = {i:0 for i in range(50)}
 model.cur_j = {i:0 for i in range(50)}
-ewcData, synData = create_syn_data(model)
+if ewc_lambda != 0:
+    ewcData, synData = create_syn_data(model)
 
 # Optimizer setup
 optimizer = torch.optim.SGD(
@@ -106,7 +113,8 @@ criterion = torch.nn.CrossEntropyLoss()
 # loop over the training incremental batches
 for i, train_batch in enumerate(dataset):
 
-    init_batch(model, ewcData, synData)
+    if ewc_lambda != 0:
+        init_batch(model, ewcData, synData)
 
     if i == 1:
         freeze_up_to(model, freeze_below_layer)
@@ -171,7 +179,8 @@ for i, train_batch in enumerate(dataset):
 
         for it in range(it_x_ep):
 
-            pre_update(model, synData)
+            if ewc_lambda !=0:
+                pre_update(model, synData)
 
             start = it * (mb_size - n2inject)
             end = (it + 1) * (mb_size - n2inject)
@@ -207,13 +216,15 @@ for i, train_batch in enumerate(dataset):
             correct_cnt += (pred_label == y_mb).sum()
 
             loss = criterion(logits, y_mb)
-            loss += compute_ewc_loss(model, ewcData, lambd=ewc_lambda)
+            if ewc_lambda !=0:
+                loss += compute_ewc_loss(model, ewcData, lambd=ewc_lambda)
             ave_loss += loss.item()
 
             loss.backward()
             optimizer.step()
 
-            post_update(model, synData)
+            if ewc_lambda !=0:
+                post_update(model, synData)
 
             acc = correct_cnt.item() / \
                   ((it + 1) * y_mb.size(0))
@@ -228,14 +239,14 @@ for i, train_batch in enumerate(dataset):
 
             # Log scalar values (scalar summary) to TB
             tot_it_step +=1
-            with summary_writer.as_default():
-                tf.summary.scalar('train_loss', ave_loss, step=tot_it_step)
-                tf.summary.scalar('train_accuracy', acc, step=tot_it_step)
+            writer.add_scalar('train_loss', ave_loss, tot_it_step)
+            writer.add_scalar('train_accuracy', acc, tot_it_step)
 
         cur_ep += 1
 
     consolidate_weights(model, cur_class)
-    update_ewc_data(model, ewcData, synData, 0.001, 1)
+    if ewc_lambda != 0:
+        update_ewc_data(model, ewcData, synData, 0.001, 1)
 
     # how many patterns to save for next iter
     h = min(rm_sz // (i + 1), cur_acts.size(0))
@@ -265,9 +276,8 @@ for i, train_batch in enumerate(dataset):
     )
 
     # Log scalar values (scalar summary) to TB
-    with summary_writer.as_default():
-        tf.summary.scalar('test_loss', ave_loss, step=i)
-        tf.summary.scalar('test_accuracy', acc, step=i)
+    writer.add_scalar('test_loss', ave_loss, i)
+    writer.add_scalar('test_accuracy', acc, i)
 
     # update number examples encountered over time
     for c, n in model.cur_j.items():
@@ -276,3 +286,5 @@ for i, train_batch in enumerate(dataset):
     print("---------------------------------")
     print("Accuracy: ", acc)
     print("---------------------------------")
+
+writer.close()

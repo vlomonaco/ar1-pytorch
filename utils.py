@@ -364,12 +364,13 @@ def create_syn_data(model):
     # the params at loss minimum, the second the parameter importance
     # The second array is a dictionary with the synData
     synData = {}
-    synData['old_theta'] = np.zeros(size, dtype=np.float32)
-    synData['new_theta'] = np.zeros(size, dtype=np.float32)
-    synData['grad'] = np.zeros(size, dtype=np.float32)
-    synData['trajectory'] = np.zeros(size, dtype=np.float32)
-    synData['cum_trajectory'] = np.zeros(size, dtype=np.float32)
-    return np.zeros((2, size), dtype=np.float32), synData
+    synData['old_theta'] = torch.zeros(size, dtype=torch.float32)
+    synData['new_theta'] = torch.zeros(size, dtype=torch.float32)
+    synData['grad'] = torch.zeros(size, dtype=torch.float32)
+    synData['trajectory'] = torch.zeros(size, dtype=torch.float32)
+    synData['cum_trajectory'] = torch.zeros(size, dtype=torch.float32)
+
+    return torch.zeros((2, size), dtype=torch.float32), synData
 
 
 def extract_weights(model, target):
@@ -385,7 +386,7 @@ def extract_weights(model, target):
                     weights_vector = torch.cat(
                         (weights_vector, param.flatten()), 0)
 
-        target[...] = weights_vector.cpu().numpy()
+        target[...] = weights_vector.cpu()
 
 
 def extract_grad(model, target):
@@ -401,7 +402,7 @@ def extract_grad(model, target):
                     grad_vector = torch.cat(
                         (grad_vector, param.grad.flatten()), 0)
 
-        target[...] = grad_vector.cpu().numpy()
+        target[...] = grad_vector.cpu()
 
 
 def init_batch(net, ewcData, synData):
@@ -428,13 +429,14 @@ def update_ewc_data(net, ewcData, synData, clip_to, c=0.0015):
     synData['cum_trajectory'] += c * synData['trajectory'] / (
                     np.square(synData['new_theta'] - ewcData[0]) + eps)
 
-    ewcData[1] = np.copy(-synData[
-        'cum_trajectory'])  # change sign here because the Ewc regularization
+    ewcData[1] = torch.empty_like(synData['cum_trajectory'])\
+        .copy_(-synData['cum_trajectory'])
+    # change sign here because the Ewc regularization
     # in Caffe (theta - thetaold) is inverted w.r.t. syn equation [4]
     # (thetaold - theta)
-    ewcData[1][ewcData[1] > clip_to] = clip_to
+    ewcData[1] = torch.clamp(ewcData[1], max=clip_to)
     # (except CWR)
-    ewcData[0] = np.copy(synData['new_theta'])
+    ewcData[0] = synData['new_theta'].clone().detach()
 
 def compute_ewc_loss(model, ewcData, lambd=0):
 
@@ -448,7 +450,6 @@ def compute_ewc_loss(model, ewcData, lambd=0):
                 weights_vector = torch.cat(
                     (weights_vector, param.flatten()), 0)
 
-    ewcData = torch.as_tensor(ewcData)
     ewcData = maybe_cuda(ewcData, use_cuda=True)
     loss = (lambd / 2) * torch.dot(ewcData[1], (weights_vector - ewcData[0])**2)
     return loss
