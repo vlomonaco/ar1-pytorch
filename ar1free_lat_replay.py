@@ -73,18 +73,18 @@ ewc_lambda = eval(exp_config['ewc_lambda'])
 rm = eval(exp_config['rm'])
 
 # setting up log dir for tensorboard
-log_dir = 'logs/' + exp_name
+log_dir = 'logs_ar1/' + exp_name
 writer = SummaryWriter(log_dir)
 
 # Saving params
-hyper = json.dumps(exp_config)
+hyper = json.dumps(dict(exp_config))
 writer.add_text("parameters", hyper, 0)
 
 # Other variables init
 tot_it_step = 0
 
 # Create the dataset object
-dataset = CORE50(root='/home/admin/ssd_data/core50', scenario="nicv2_391")
+dataset = CORE50(root='/ssd1/data/core50', scenario="nicv2_391")
 preproc = preprocess_imgs
 
 # Get the fixed test set
