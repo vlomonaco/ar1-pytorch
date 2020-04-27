@@ -19,8 +19,6 @@ from __future__ import division
 from __future__ import absolute_import
 
 from data_loader import CORE50
-import torch
-import numpy as np
 import copy
 import os
 import json
@@ -70,10 +68,9 @@ l2 = eval(exp_config['l2'])
 freeze_below_layer = eval(exp_config['freeze_below_layer'])
 latent_layer_num = eval(exp_config['latent_layer_num'])
 ewc_lambda = eval(exp_config['ewc_lambda'])
-rm = eval(exp_config['rm'])
 
 # setting up log dir for tensorboard
-log_dir = 'logs_ar1/' + exp_name
+log_dir = 'logs/' + exp_name
 writer = SummaryWriter(log_dir)
 
 # Saving params
@@ -82,9 +79,10 @@ writer.add_text("parameters", hyper, 0)
 
 # Other variables init
 tot_it_step = 0
+rm = None
 
 # Create the dataset object
-dataset = CORE50(root='/ssd1/data/core50', scenario="nicv2_391")
+dataset = CORE50(root='/home/admin/ssd_data/core50', scenario="nicv2_391")
 preproc = preprocess_imgs
 
 # Get the fixed test set
@@ -116,8 +114,9 @@ for i, train_batch in enumerate(dataset):
     if ewc_lambda != 0:
         init_batch(model, ewcData, synData)
 
+    freeze_up_to(model, freeze_below_layer, only_conv=False)
+
     if i == 1:
-        freeze_up_to(model, freeze_below_layer)
         change_brn_pars(
             model, momentum=inc_update_rate, r_d_max_inc_step=0,
             r_max=max_r_max, d_max=max_d_max)
@@ -139,9 +138,8 @@ for i, train_batch in enumerate(dataset):
     print("train_x shape: {}, train_y shape: {}"
           .format(train_x.shape, train_y.shape))
 
-    model.eval()
-    model.end_features.train()
-    model.output.train()
+    model.train()
+    model.lat_features.eval()
 
     reset_weights(model, cur_class)
     cur_ep = 0

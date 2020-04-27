@@ -23,7 +23,8 @@ from __future__ import absolute_import
 
 import numpy as np
 import torch
-from models.batch_renormalization import BatchRenormalization2D
+from models.batch_renorm import BatchRenorm2D
+from torch.nn import BatchNorm2d
 
 
 def shuffle_in_unison(dataset, seed=None, in_place=False):
@@ -230,7 +231,7 @@ def replace_bn_with_brn(
         if type(target_attr) == torch.nn.BatchNorm2d:
             # print('replaced: ', name, attr_str)
             setattr(m, attr_str,
-                    BatchRenormalization2D(
+                    BatchRenorm2D(
                         target_attr.num_features,
                         gamma=target_attr.weight,
                         beta=target_attr.bias,
@@ -254,7 +255,7 @@ def change_brn_pars(
         d_max=0.0):
     for attr_str in dir(m):
         target_attr = getattr(m, attr_str)
-        if type(target_attr) == BatchRenormalization2D:
+        if type(target_attr) == BatchRenorm2D:
             target_attr.momentum = torch.tensor((momentum), requires_grad=False)
             target_attr.r_max = torch.tensor(r_max, requires_grad=False)
             target_attr.d_max = torch.tensor(d_max, requires_grad=False)
@@ -327,27 +328,44 @@ def examples_per_class(train_y):
 def set_brn_to_train(m, name=""):
         for attr_str in dir(m):
             target_attr = getattr(m, attr_str)
-            if type(target_attr) == BatchRenormalization2D:
+            if type(target_attr) == BatchRenorm2D:
                 target_attr.train()
                 # print("setting to train..")
         for n, ch in m.named_children():
             set_brn_to_train(ch, n)
 
+def set_bn_to(m, name="", phase="train"):
+        for attr_str in dir(m):
+            target_attr = getattr(m, attr_str)
+            if type(target_attr) == BatchNorm2d:
+                if phase == "train":
+                    target_attr.train()
+                    # print("setting to train..")
+                else:
+                    target_attr.eval()
+        for n, ch in m.named_children():
+            set_bn_to(ch, n, phase=phase)
+
 def set_brn_to_eval(m, name=""):
     for attr_str in dir(m):
         target_attr = getattr(m, attr_str)
-        if type(target_attr) == BatchRenormalization2D:
+        if type(target_attr) == BatchRenorm2D:
             target_attr.eval()
             # print("setting to train..")
     for n, ch in m.named_children():
         set_brn_to_eval(ch, n)
 
-def freeze_up_to(model, freeze_below_layer):
+def freeze_up_to(model, freeze_below_layer, only_conv=False):
     for name, param in model.named_parameters():
         # tells whether we want to use gradients for a given parameter
-        if "bn" not in name:
+        if only_conv:
+            if "conv" in name:
+                param.requires_grad = False
+                print("Freezing parameter " + name)
+        else:
             param.requires_grad = False
             print("Freezing parameter " + name)
+
         if name == freeze_below_layer:
             break
 

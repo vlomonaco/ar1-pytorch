@@ -1,67 +1,30 @@
-# Batch Renormalization for convolutional neural nets (2D) implementation based
-# on https://arxiv.org/abs/1702.03275
-# url: https://github.com/mf1024/Batch-Renormalization-PyTorch
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+################################################################################
+# Copyright (c) 2020. Vincenzo Lomonaco. All rights reserved.                  #
+# See the accompanying LICENSE file for terms.                                 #
+#                                                                              #
+# Date: 01-04-2020                                                             #
+# Author: Vincenzo Lomonaco                                                    #
+# E-mail: vincenzo.lomonaco@unibo.it                                           #
+# Website: vincenzolomonaco.com                                                #
+################################################################################
+
+""" Batch Renorm custom implementation to inherit parameters from pre-trained
+    Batch Norm layers."""
 
 from torch.nn import Module
 import torch
 
 
-class BatchNormalization2D(Module):
-
-    def __init__(self, num_features,  eps=1e-05, momentum = 0.1):
-
-        super(BatchNormalization2D, self).__init__()
-
-        self.eps = eps
-        self.momentum = torch.tensor((momentum), requires_grad = False)
-
-        self.gamma = torch.nn.Parameter(
-            torch.ones((1, num_features, 1, 1), requires_grad=True))
-        self.beta = torch.nn.Parameter(
-            torch.zeros((1, num_features, 1, 1), requires_grad=True))
-
-        self.running_avg_mean = torch.ones(
-            (1, num_features, 1, 1), requires_grad=False)
-        self.running_avg_std = torch.zeros(
-            (1, num_features, 1, 1), requires_grad=False)
-
-    def forward(self, x):
-
-        device = self.gamma.device
-
-        batch_ch_mean = torch.mean(x, dim=(0,2,3), keepdim=True).to(device)
-        batch_ch_std = torch.clamp(
-            torch.std(x, dim=(0,2,3), keepdim=True), self.eps, 1e10).to(device)
-
-        self.running_avg_std = self.running_avg_std.to(device)
-        self.running_avg_mean = self.running_avg_mean.to(device)
-        self.momentum = self.momentum.to(device)
-
-        if self.training:
-
-            x = (x - batch_ch_mean) / batch_ch_std
-            x = x * self.gamma + self.beta
-
-        else:
-
-            x = (x - self.running_avg_mean) / self.running_avg_std
-            x = self.gamma * x + self.beta
-
-        self.running_avg_mean = self.running_avg_mean + self.momentum * \
-            (batch_ch_mean.data.to(device) - self.running_avg_mean)
-        self.running_avg_std = self.running_avg_std + self.momentum * \
-            (batch_ch_std.data.to(device) - self.running_avg_std)
-
-        return x
-
-
-class BatchRenormalization2D(Module):
+class BatchRenorm2D(Module):
 
     def __init__(self, num_features,  gamma=None, beta=None,
                  running_mean=None, running_var=None, eps=1e-05,
                  momentum=0.01, r_d_max_inc_step = 0.0001, r_max=1.0,
                  d_max=0.0, max_r_max=3.0, max_d_max=5.0):
-        super(BatchRenormalization2D, self).__init__()
+        super(BatchRenorm2D, self).__init__()
 
         self.eps = eps
         self.num_features = num_features
