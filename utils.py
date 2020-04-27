@@ -340,7 +340,7 @@ def set_brn_to_eval(m, name=""):
             target_attr.eval()
             # print("setting to train..")
     for n, ch in m.named_children():
-        set_brn_to_train(ch, n)
+        set_brn_to_eval(ch, n)
 
 def freeze_up_to(model, freeze_below_layer):
     for name, param in model.named_parameters():
