@@ -230,29 +230,25 @@ def maybe_cuda(what, use_cuda=True, **kw):
 def replace_bn_with_brn(
         m, name="", momentum=0.1, r_d_max_inc_step=0.0001, r_max=1.0,
         d_max=0.0, max_r_max=3.0, max_d_max=5.0):
-    for attr_str in dir(m):
-        target_attr = getattr(m, attr_str)
-        if type(target_attr) == torch.nn.BatchNorm2d:
-            # print('replaced: ', name, attr_str)
-            setattr(m, attr_str,
-                    BatchRenorm2D(
-                        target_attr.num_features,
-                        gamma=target_attr.weight,
-                        beta=target_attr.bias,
-                        running_mean=target_attr.running_mean,
-                        running_var=target_attr.running_var,
-                        eps=target_attr.eps,
-                        momentum=momentum,
-                        r_d_max_inc_step=r_d_max_inc_step,
-                        r_max=r_max,
-                        d_max=d_max,
-                        max_r_max=max_r_max,
-                        max_d_max=max_d_max
-                        )
-                    )
-    for n, ch in m.named_children():
-        replace_bn_with_brn(ch, n, momentum, r_d_max_inc_step, r_max, d_max,
-                            max_r_max, max_d_max)
+    for child_name, child in m.named_children():
+        if isinstance(child, torch.nn.BatchNorm2d):
+            setattr(m, child_name, BatchRenorm2D(
+                child.num_features,
+                gamma=child.weight,
+                beta=child.bias,
+                running_mean=child.running_mean,
+                running_var=child.running_var,
+                eps=child.eps,
+                momentum=momentum,
+                r_d_max_inc_step=r_d_max_inc_step,
+                r_max=r_max,
+                d_max=d_max,
+                max_r_max=max_r_max,
+                max_d_max=max_d_max
+            ))
+        else:
+            replace_bn_with_brn(child, "", momentum, r_d_max_inc_step, r_max, d_max,
+                                max_r_max, max_d_max)
 
 
 def change_brn_pars(
