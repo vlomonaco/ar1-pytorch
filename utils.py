@@ -56,6 +56,7 @@ def shuffle_in_unison(dataset, seed=None, in_place=False):
     if not in_place:
         return new_dataset
 
+
 def shuffle_in_unison_pytorch(dataset, seed=None):
 
     shuffled_dataset = []
@@ -66,6 +67,7 @@ def shuffle_in_unison_pytorch(dataset, seed=None):
         shuffled_dataset.append(x[perm])
 
     return shuffled_dataset
+
 
 def pad_data(dataset, mb_size):
     """
@@ -175,6 +177,7 @@ def get_accuracy(model, criterion, batch_size, test_x, test_y, use_cuda=True,
 
     return ave_loss, acc, accs
 
+
 def preprocess_imgs(img_batch, scale=True, norm=True, channel_first=True):
     """
     Here we get a batch of PIL imgs and we return them normalized as for
@@ -223,46 +226,44 @@ def maybe_cuda(what, use_cuda=True, **kw):
         what = what.cuda()
     return what
 
+
 def replace_bn_with_brn(
         m, name="", momentum=0.1, r_d_max_inc_step=0.0001, r_max=1.0,
         d_max=0.0, max_r_max=3.0, max_d_max=5.0):
-    for attr_str in dir(m):
-        target_attr = getattr(m, attr_str)
-        if type(target_attr) == torch.nn.BatchNorm2d:
-            # print('replaced: ', name, attr_str)
-            setattr(m, attr_str,
-                    BatchRenorm2D(
-                        target_attr.num_features,
-                        gamma=target_attr.weight,
-                        beta=target_attr.bias,
-                        running_mean=target_attr.running_mean,
-                        running_var=target_attr.running_var,
-                        eps=target_attr.eps,
-                        momentum=momentum,
-                        r_d_max_inc_step=r_d_max_inc_step,
-                        r_max=r_max,
-                        d_max=d_max,
-                        max_r_max=max_r_max,
-                        max_d_max=max_d_max
-                        )
-                    )
-    for n, ch in m.named_children():
-        replace_bn_with_brn(ch, n, momentum, r_d_max_inc_step, r_max, d_max,
-                            max_r_max, max_d_max)
+    for child_name, child in m.named_children():
+        if isinstance(child, torch.nn.BatchNorm2d):
+            setattr(m, child_name, BatchRenorm2D(
+                child.num_features,
+                gamma=child.weight,
+                beta=child.bias,
+                running_mean=child.running_mean,
+                running_var=child.running_var,
+                eps=child.eps,
+                momentum=momentum,
+                r_d_max_inc_step=r_d_max_inc_step,
+                r_max=r_max,
+                d_max=d_max,
+                max_r_max=max_r_max,
+                max_d_max=max_d_max
+            ))
+        else:
+            replace_bn_with_brn(child, child_name, momentum, r_d_max_inc_step, r_max, d_max,
+                                max_r_max, max_d_max)
+
 
 def change_brn_pars(
         m, name="", momentum=0.1, r_d_max_inc_step=0.0001, r_max=1.0,
         d_max=0.0):
-    for attr_str in dir(m):
-        target_attr = getattr(m, attr_str)
-        if type(target_attr) == BatchRenorm2D:
-            target_attr.momentum = torch.tensor((momentum), requires_grad=False)
+    for target_name, target_attr in m.named_children():
+        if isinstance(target_attr, BatchRenorm2D):
+            target_attr.momentum = torch.tensor(momentum, requires_grad=False)
             target_attr.r_max = torch.tensor(r_max, requires_grad=False)
             target_attr.d_max = torch.tensor(d_max, requires_grad=False)
             target_attr.r_d_max_inc_step = r_d_max_inc_step
 
-    for n, ch in m.named_children():
-        change_brn_pars(ch, n, momentum, r_d_max_inc_step, r_max, d_max)
+        else:
+            change_brn_pars(target_attr, target_name, momentum, r_d_max_inc_step, r_max, d_max)
+
 
 def consolidate_weights(model, cur_clas):
     """ Mean-shift for the target layer weights"""
@@ -294,6 +295,7 @@ def consolidate_weights(model, cur_clas):
             #     " Std W: " + str(np.std(w)) + " Max W: " + str(np.max(w))
             # )
 
+
 def set_consolidate_weights(model):
     """ set trained weights """
 
@@ -318,6 +320,7 @@ def reset_weights(model, cur_clas):
                     torch.from_numpy(model.saved_weights[c])
                 )
 
+
 def examples_per_class(train_y):
     count = {i:0 for i in range(50)}
     for y in train_y:
@@ -325,35 +328,33 @@ def examples_per_class(train_y):
 
     return count
 
-def set_brn_to_train(m, name=""):
-        for attr_str in dir(m):
-            target_attr = getattr(m, attr_str)
-            if type(target_attr) == BatchRenorm2D:
-                target_attr.train()
-                # print("setting to train..")
-        for n, ch in m.named_children():
-            set_brn_to_train(ch, n)
 
-def set_bn_to(m, name="", phase="train"):
-        for attr_str in dir(m):
-            target_attr = getattr(m, attr_str)
-            if type(target_attr) == BatchNorm2d:
-                if phase == "train":
-                    target_attr.train()
-                    # print("setting to train..")
-                else:
-                    target_attr.eval()
-        for n, ch in m.named_children():
-            set_bn_to(ch, n, phase=phase)
+def set_brn_to_train(m, name=""):
+    for target_name, target_attr in m.named_children():
+        if isinstance(target_attr, BatchRenorm2D):
+            target_attr.train()
+        else:
+            set_brn_to_train(target_attr, target_name)
+
 
 def set_brn_to_eval(m, name=""):
-    for attr_str in dir(m):
-        target_attr = getattr(m, attr_str)
-        if type(target_attr) == BatchRenorm2D:
+    for target_name, target_attr in m.named_children():
+        if isinstance(target_attr, BatchRenorm2D):
             target_attr.eval()
-            # print("setting to train..")
-    for n, ch in m.named_children():
-        set_brn_to_train(ch, n)
+        else:
+            set_brn_to_eval(target_attr, target_name)
+
+
+def set_bn_to(m, name="", phase="train"):
+    for target_name, target_attr in m.named_children():
+        if isinstance(target_attr, torch.nn.BatchNorm2d):
+            if phase == "train":
+                target_attr.train()
+            else:
+                target_attr.eval()
+        else:
+            set_bn_to(target_attr, target_name, phase)
+
 
 def freeze_up_to(model, freeze_below_layer, only_conv=False):
     for name, param in model.named_parameters():
@@ -368,6 +369,7 @@ def freeze_up_to(model, freeze_below_layer, only_conv=False):
 
         if name == freeze_below_layer:
             break
+
 
 def create_syn_data(model):
     size = 0
@@ -456,6 +458,7 @@ def update_ewc_data(net, ewcData, synData, clip_to, c=0.0015):
     # (except CWR)
     ewcData[0] = synData['new_theta'].clone().detach()
 
+
 def compute_ewc_loss(model, ewcData, lambd=0):
 
     weights_vector = None
@@ -471,6 +474,7 @@ def compute_ewc_loss(model, ewcData, lambd=0):
     ewcData = maybe_cuda(ewcData, use_cuda=True)
     loss = (lambd / 2) * torch.dot(ewcData[1], (weights_vector - ewcData[0])**2)
     return loss
+
 
 if __name__ == "__main__":
 

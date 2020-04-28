@@ -13,12 +13,12 @@
 
 """ This file contains the model Class used for the exps"""
 
-import os
 import torch
 import torch.nn as nn
 
 from pytorchcv.models.mobilenet import DwsConvBlock
 from pytorchcv.model_provider import get_model
+
 
 def remove_sequential(network, all_layers):
 
@@ -29,6 +29,7 @@ def remove_sequential(network, all_layers):
         else: # if leaf node, add it to list
             # print(layer)
             all_layers.append(layer)
+
 
 def remove_DwsConvBlock(cur_layers):
 
@@ -67,7 +68,6 @@ class MyMobilenetV1(nn.Module):
         self.end_features = nn.Sequential(*end_list)
 
         self.output = nn.Linear(1024, 50, bias=False)
-
 
     def forward(self, x, latent_input=None, return_lat_acts=False):
 
