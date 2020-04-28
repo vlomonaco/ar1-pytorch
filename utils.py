@@ -247,23 +247,22 @@ def replace_bn_with_brn(
                 max_d_max=max_d_max
             ))
         else:
-            replace_bn_with_brn(child, "", momentum, r_d_max_inc_step, r_max, d_max,
+            replace_bn_with_brn(child, child_name, momentum, r_d_max_inc_step, r_max, d_max,
                                 max_r_max, max_d_max)
 
 
 def change_brn_pars(
         m, name="", momentum=0.1, r_d_max_inc_step=0.0001, r_max=1.0,
         d_max=0.0):
-    for attr_str in dir(m):
-        target_attr = getattr(m, attr_str)
-        if type(target_attr) == BatchRenorm2D:
-            target_attr.momentum = torch.tensor((momentum), requires_grad=False)
+    for target_name, target_attr in m.named_children():
+        if isinstance(target_attr, BatchRenorm2D):
+            target_attr.momentum = torch.tensor(momentum, requires_grad=False)
             target_attr.r_max = torch.tensor(r_max, requires_grad=False)
             target_attr.d_max = torch.tensor(d_max, requires_grad=False)
             target_attr.r_d_max_inc_step = r_d_max_inc_step
 
-    for n, ch in m.named_children():
-        change_brn_pars(ch, n, momentum, r_d_max_inc_step, r_max, d_max)
+        else:
+            change_brn_pars(target_attr, target_name, momentum, r_d_max_inc_step, r_max, d_max)
 
 
 def consolidate_weights(model, cur_clas):
@@ -331,36 +330,30 @@ def examples_per_class(train_y):
 
 
 def set_brn_to_train(m, name=""):
-    for attr_str in dir(m):
-        target_attr = getattr(m, attr_str)
-        if type(target_attr) == BatchRenorm2D:
+    for target_name, target_attr in m.named_children():
+        if isinstance(target_attr, BatchRenorm2D):
             target_attr.train()
-            # print("setting to train..")
-    for n, ch in m.named_children():
-        set_brn_to_train(ch, n)
-
-
-def set_bn_to(m, name="", phase="train"):
-    for attr_str in dir(m):
-        target_attr = getattr(m, attr_str)
-        if type(target_attr) == BatchNorm2d:
-            if phase == "train":
-                target_attr.train()
-                # print("setting to train..")
-            else:
-                target_attr.eval()
-    for n, ch in m.named_children():
-        set_bn_to(ch, n, phase=phase)
+        else:
+            set_brn_to_train(target_attr, target_name)
 
 
 def set_brn_to_eval(m, name=""):
-    for attr_str in dir(m):
-        target_attr = getattr(m, attr_str)
-        if type(target_attr) == BatchRenorm2D:
+    for target_name, target_attr in m.named_children():
+        if isinstance(target_attr, BatchRenorm2D):
             target_attr.eval()
-            # print("setting to train..")
-    for n, ch in m.named_children():
-        set_brn_to_eval(ch, n)
+        else:
+            set_brn_to_eval(target_attr, target_name)
+
+
+def set_bn_to(m, name="", phase="train"):
+    for target_name, target_attr in m.named_children():
+        if isinstance(target_attr, torch.nn.BatchNorm2d):
+            if phase == "train":
+                target_attr.train()
+            else:
+                target_attr.eval()
+        else:
+            set_bn_to(target_attr, target_name, phase)
 
 
 def freeze_up_to(model, freeze_below_layer, only_conv=False):
