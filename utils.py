@@ -21,10 +21,13 @@ from __future__ import print_function
 from __future__ import division
 from __future__ import absolute_import
 
+import copy
+from typing import Dict, Optional, Sequence
+
 import numpy as np
 import torch
 from models.batch_renorm import BatchRenorm2D
-from torch.nn import BatchNorm2d
+from torch.nn import BatchNorm2d, Module
 
 
 def shuffle_in_unison(dataset, seed=None, in_place=False):
@@ -231,7 +234,7 @@ def replace_bn_with_brn(
         m, name="", momentum=0.1, r_d_max_inc_step=0.0001, r_max=1.0,
         d_max=0.0, max_r_max=3.0, max_d_max=5.0):
     for child_name, child in m.named_children():
-        if isinstance(child, torch.nn.BatchNorm2d):
+        if isinstance(child, BatchNorm2d):
             setattr(m, child_name, BatchRenorm2D(
                 child.num_features,
                 gamma=child.weight,
@@ -347,7 +350,7 @@ def set_brn_to_eval(m, name=""):
 
 def set_bn_to(m, name="", phase="train"):
     for target_name, target_attr in m.named_children():
-        if isinstance(target_attr, torch.nn.BatchNorm2d):
+        if isinstance(target_attr, BatchNorm2d):
             if phase == "train":
                 target_attr.train()
             else:
@@ -356,16 +359,18 @@ def set_bn_to(m, name="", phase="train"):
             set_bn_to(target_attr, target_name, phase)
 
 
-def freeze_up_to(model, freeze_below_layer, only_conv=False):
+def freeze_up_to(model, freeze_below_layer, only_conv=False, print_frozen_parameters=False):
     for name, param in model.named_parameters():
         # tells whether we want to use gradients for a given parameter
         if only_conv:
             if "conv" in name:
                 param.requires_grad = False
-                print("Freezing parameter " + name)
+                if print_frozen_parameters:
+                    print("Freezing parameter " + name)
         else:
             param.requires_grad = False
-            print("Freezing parameter " + name)
+            if print_frozen_parameters:
+                print("Freezing parameter " + name)
 
         if name == freeze_below_layer:
             break
@@ -474,6 +479,60 @@ def compute_ewc_loss(model, ewcData, lambd=0):
     ewcData = maybe_cuda(ewcData, use_cuda=True)
     loss = (lambd / 2) * torch.dot(ewcData[1], (weights_vector - ewcData[0])**2)
     return loss
+
+
+class CwrValidationSession:
+
+    def __init__(self, model: Module,
+                 cur_class: Sequence[int],
+                 cwr_layer: str = 'output'):
+        self.model: Module = model
+        self.cur_class: Sequence[int] = cur_class
+        self.cwr_layer: str = cwr_layer
+
+        self.saved_weights: Dict[int, np.ndarray] = {}
+        self.past_j: Dict[int, int] = {}
+        self.cur_j: Dict[int, int] = {}
+        self.layer_weights: torch.Tensor = torch.tensor([])
+        self.layer_bias: Optional[torch.Tensor] = None
+
+        self._reset_state()
+
+    def __enter__(self):
+        self.saved_weights = copy.deepcopy(self.model.saved_weights)
+        self.past_j = copy.deepcopy(self.model.past_j)
+        self.cur_j = copy.deepcopy(self.model.cur_j)
+
+        layer_ref = getattr(self.model, self.cwr_layer)
+
+        self.layer_weights = layer_ref.weight.detach().cpu()
+
+        if layer_ref.bias is not None:
+            self.layer_bias = layer_ref.bias.detach().cpu()
+        else:
+            self.layer_bias = None
+
+        consolidate_weights(self.model, self.cur_class)
+        set_consolidate_weights(self.model)
+        return self.model
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.model.saved_weights = self.saved_weights
+        self.model.past_j = self.past_j
+        self.model.cur_j = self.cur_j
+
+        with torch.no_grad():
+            layer_ref = getattr(self.model, self.cwr_layer)
+            layer_ref.weight.copy_(self.layer_weights)
+            if self.layer_bias is not None:
+                layer_ref.bias.copy_(self.layer_bias)
+
+    def _reset_state(self):
+        self.saved_weights = {}
+        self.past_j = {}
+        self.cur_j = {}
+        self.layer_weights = torch.tensor([])
+        self.layer_bias = None
 
 
 if __name__ == "__main__":

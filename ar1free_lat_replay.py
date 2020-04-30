@@ -19,7 +19,6 @@ from __future__ import division
 from __future__ import absolute_import
 
 from data_loader import CORE50
-import copy
 import os
 import json
 from models.mobilenet import MyMobilenetV1
@@ -57,6 +56,7 @@ inc_lr = eval(exp_config['inc_lr'])
 mb_size = eval(exp_config['mb_size'])
 init_train_ep = eval(exp_config['init_train_ep'])
 inc_train_ep = eval(exp_config['inc_train_ep'])
+val_interval_ep = eval(exp_config['val_interval_ep'])
 init_update_rate = eval(exp_config['init_update_rate'])
 inc_update_rate = eval(exp_config['inc_update_rate'])
 max_r_max = eval(exp_config['max_r_max'])
@@ -238,6 +238,14 @@ for i, train_batch in enumerate(dataset):
             tot_it_step +=1
             writer.add_scalar('train_loss', ave_loss, tot_it_step)
             writer.add_scalar('train_accuracy', acc, tot_it_step)
+
+        if (ep+1) % val_interval_ep == 0 and ep != train_ep - 1:
+            with CwrValidationSession(model, cur_class) as val_model:
+                ave_loss, acc, accs = get_accuracy(val_model, criterion, mb_size,
+                                                   test_x, test_y, preproc=preproc)
+
+                print('===== ep {}/{}, avg. test. loss: {:.6f}, test acc: {:.3f} ====='
+                      .format(ep+1, train_ep, ave_loss, acc))
 
         cur_ep += 1
 
