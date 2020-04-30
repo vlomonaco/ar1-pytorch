@@ -16,7 +16,11 @@
 import torch
 import torch.nn as nn
 
-from pytorchcv.models.mobilenet import DwsConvBlock
+try:
+    from pytorchcv.models.common import DwsConvBlock
+except:
+    from pytorchcv.models.mobilenet import DwsConvBlock
+
 from pytorchcv.model_provider import get_model
 
 

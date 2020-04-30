@@ -95,8 +95,8 @@ replace_bn_with_brn(
     max_r_max=max_r_max, max_d_max=max_d_max
 )
 model.saved_weights = {}
-model.past_j = {i:0 for i in range(50)}
-model.cur_j = {i:0 for i in range(50)}
+model.past_j = {i: 0 for i in range(50)}
+model.cur_j = {i: 0 for i in range(50)}
 if ewc_lambda != 0:
     ewcData, synData = create_syn_data(model)
 
@@ -211,21 +211,20 @@ for i, train_batch in enumerate(dataset):
                     cur_acts = torch.cat((cur_acts, lat_acts), 0)
 
             _, pred_label = torch.max(logits, 1)
-            correct_cnt += (pred_label == y_mb).sum()
+            correct_cnt += (pred_label == y_mb).sum().item()
 
             loss = criterion(logits, y_mb)
-            if ewc_lambda !=0:
+            if ewc_lambda != 0:
                 loss += compute_ewc_loss(model, ewcData, lambd=ewc_lambda)
             ave_loss += loss.item()
 
             loss.backward()
             optimizer.step()
 
-            if ewc_lambda !=0:
+            if ewc_lambda != 0:
                 post_update(model, synData)
 
-            acc = correct_cnt.item() / \
-                  ((it + 1) * y_mb.size(0))
+            acc = correct_cnt / ((it + 1) * y_mb.size(0))
             ave_loss /= ((it + 1) * y_mb.size(0))
 
             if it % 10 == 0:
