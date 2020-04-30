@@ -527,6 +527,8 @@ class CwrValidationSession:
             if self.layer_bias is not None:
                 layer_ref.bias.copy_(self.layer_bias)
 
+        self._reset_state()
+
     def _reset_state(self):
         self.saved_weights = {}
         self.past_j = {}
