@@ -100,15 +100,18 @@ This results is a few percentage point better than the one
    - we did not find any advantage in keeping the BRN layers below the latent
     reply layer free to learn, so we freeze them from the first batch.
 
-### Use AR1* in your project
+### Use AR1* in Your Project
 
 You are free to take this code and use it in your own project! However, take
- in mind that the hyper-parameters used in the experiment ([params.cfg
-](params.cfg)) have been chosen to replicate the results shown in
- the paper for the CORe50 NICv2-391 scenario and may result suboptimal in
-  different settings.
+ in mind that the hyper-parameters used in the experiment have been chosen to 
+ replicate the results shown in the paper for the CORe50 NICv2-391 scenario
+  and may result suboptimal in different settings.
 
 We suggest to take a look at the papers linked above to have a better idea
  on how to parametrize AR1* on different benchmarks. In particular we
-  underling the importance of BN / BRN parameters, which may be fundamental
+  underline the importance of BN / BRN parameters, which may be fundamental
    to tune appropriately. 
+   
+We are working to release AR1* hyper-parameter settings for other
+ common Continual Learning benchmarks. Send an email to vincenzo.lomonaco
+ @unibo.it in case you're interested!
