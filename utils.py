@@ -2,12 +2,13 @@
 # -*- coding: utf-8 -*-
 
 ################################################################################
-# Copyright (c) 2019. Vincenzo Lomonaco. All rights reserved.                  #
-# Copyrights licensed under the CC BY 4.0 License.                             #
+# Copyright (c) 2020. Vincenzo Lomonaco, Gabriele Graffieti, Lorenzo           #
+# Pellegrini, Davide Maltoni. All rights reserved.                             #
 # See the accompanying LICENSE file for terms.                                 #
 #                                                                              #
-# Date: 8-11-2019                                                              #
-# Author: Vincenzo Lomonaco                                                    #
+# Date: 01-04-2020                                                             #
+# Authors: Vincenzo Lomonaco, Gabriele Graffieti, Lorenzo Pellegrini, Davide   #
+# Maltoni.                                                                     #
 # E-mail: vincenzo.lomonaco@unibo.it                                           #
 # Website: vincenzolomonaco.com                                                #
 ################################################################################
@@ -24,8 +25,6 @@ from __future__ import absolute_import
 import numpy as np
 import torch
 from models.batch_renorm import BatchRenorm2D
-from torch.nn import BatchNorm2d
-
 
 def shuffle_in_unison(dataset, seed=None, in_place=False):
     """
@@ -58,6 +57,10 @@ def shuffle_in_unison(dataset, seed=None, in_place=False):
 
 
 def shuffle_in_unison_pytorch(dataset, seed=None):
+    """
+    Shuffle two (or more) list of torch tensors in unison. It's important to
+    shuffle the images and the labels maintaining their correspondence.
+    """
 
     shuffled_dataset = []
     perm = torch.randperm(dataset[0].size(0))
@@ -269,31 +272,19 @@ def consolidate_weights(model, cur_clas):
     """ Mean-shift for the target layer weights"""
 
     with torch.no_grad():
-        # print(model.classifier[0].weight.size())
         globavg = np.average(model.output.weight.detach()
                              .cpu().numpy()[cur_clas])
-        # print("GlobalAvg: {} ".format(globavg))
         for c in cur_clas:
             w = model.output.weight.detach().cpu().numpy()[c]
 
             if c in cur_clas:
                 new_w = w - globavg
-                # if len(cur_clas) == 10:
-                #     print("This is first batch!")
-                #     new_w *= 4
                 if c in model.saved_weights.keys():
                     wpast_j = np.sqrt(model.past_j[c] / model.cur_j[c])
-                    # wpast_j = model.past_j[c] / model.cur_j[c]
                     model.saved_weights[c] = (model.saved_weights[c] * wpast_j
                      + new_w) / (wpast_j + 1)
                 else:
                     model.saved_weights[c] = new_w
-
-            # debug
-            # print(
-            #     "C: " + str(c) + "  -  Avg W: " + str(np.average(w)) +
-            #     " Std W: " + str(np.std(w)) + " Max W: " + str(np.max(w))
-            # )
 
 
 def set_consolidate_weights(model):
@@ -311,9 +302,6 @@ def reset_weights(model, cur_clas):
 
     with torch.no_grad():
         model.output.weight.fill_(0.0)
-        # model.output.weight.copy_(
-        #     torch.zeros(model.output.weight.size())
-        # )
         for c, w in model.saved_weights.items():
             if c in cur_clas:
                 model.output.weight[c].copy_(
@@ -426,7 +414,8 @@ def extract_grad(model, target):
 
 
 def init_batch(net, ewcData, synData):
-    extract_weights(net, ewcData[0])  # Keep initial weights
+    # Keep initial weights
+    extract_weights(net, ewcData[0])
     synData['trajectory'] = 0
 
 
@@ -451,9 +440,7 @@ def update_ewc_data(net, ewcData, synData, clip_to, c=0.0015):
 
     ewcData[1] = torch.empty_like(synData['cum_trajectory'])\
         .copy_(-synData['cum_trajectory'])
-    # change sign here because the Ewc regularization
-    # in Caffe (theta - thetaold) is inverted w.r.t. syn equation [4]
-    # (thetaold - theta)
+
     ewcData[1] = torch.clamp(ewcData[1], max=clip_to)
     # (except CWR)
     ewcData[0] = synData['new_theta'].clone().detach()
@@ -464,7 +451,6 @@ def compute_ewc_loss(model, ewcData, lambd=0):
     weights_vector = None
     for name, param in model.named_parameters():
         if "bn" not in name and "output" not in name:
-            # print(name, param.flatten())
             if weights_vector is None:
                 weights_vector = param.flatten()
             else:

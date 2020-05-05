@@ -2,11 +2,13 @@
 # -*- coding: utf-8 -*-
 
 ################################################################################
-# Copyright (c) 2019. Vincenzo Lomonaco. All rights reserved.                  #
+# Copyright (c) 2020. Vincenzo Lomonaco, Gabriele Graffieti, Lorenzo           #
+# Pellegrini, Davide Maltoni. All rights reserved.                             #
 # See the accompanying LICENSE file for terms.                                 #
 #                                                                              #
-# Date: 23-07-2019                                                             #
-# Author: Vincenzo Lomonaco                                                    #
+# Date: 01-04-2020                                                             #
+# Authors: Vincenzo Lomonaco, Gabriele Graffieti, Lorenzo Pellegrini, Davide   #
+# Maltoni.                                                                     #
 # E-mail: vincenzo.lomonaco@unibo.it                                           #
 # Website: vincenzolomonaco.com                                                #
 ################################################################################
@@ -16,7 +18,10 @@
 import torch
 import torch.nn as nn
 
-from pytorchcv.models.mobilenet import DwsConvBlock
+try:
+    from pytorchcv.models.mobilenet import DwsConvBlock
+except:
+    from pytorchcv.models.common import DwsConvBlock
 from pytorchcv.model_provider import get_model
 
 

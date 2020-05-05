@@ -2,11 +2,13 @@
 # -*- coding: utf-8 -*-
 
 ################################################################################
-# Copyright (c) 2020. Vincenzo Lomonaco. All rights reserved.                  #
+# Copyright (c) 2020. Vincenzo Lomonaco, Gabriele Graffieti, Lorenzo           #
+# Pellegrini, Davide Maltoni. All rights reserved.                             #
 # See the accompanying LICENSE file for terms.                                 #
 #                                                                              #
 # Date: 01-04-2020                                                             #
-# Author: Vincenzo Lomonaco                                                    #
+# Authors: Vincenzo Lomonaco, Gabriele Graffieti, Lorenzo Pellegrini, Davide   #
+# Maltoni.                                                                     #
 # E-mail: vincenzo.lomonaco@unibo.it                                           #
 # Website: vincenzolomonaco.com                                                #
 ################################################################################
@@ -90,6 +92,7 @@ test_x, test_y = dataset.get_test_set()
 
 # Model setup
 model = MyMobilenetV1(pretrained=True, latent_layer_num=latent_layer_num)
+# we replace BN layers with Batch Renormalization layers
 replace_bn_with_brn(
     model, momentum=init_update_rate, r_d_max_inc_step=inc_step,
     max_r_max=max_r_max, max_d_max=max_d_max
@@ -114,6 +117,7 @@ for i, train_batch in enumerate(dataset):
     if ewc_lambda != 0:
         init_batch(model, ewcData, synData)
 
+    # we freeze the layer below the replay layer since the first batch
     freeze_up_to(model, freeze_below_layer, only_conv=False)
 
     if i == 1:
@@ -165,6 +169,7 @@ for i, train_batch in enumerate(dataset):
         print("training ep: ", ep)
         correct_cnt, ave_loss = 0, 0
 
+        # computing how many patterns to inject in the latent replay layer
         if i > 0:
             cur_sz = train_x.size(0) // ((train_x.size(0) + rm_sz) // mb_size)
             it_x_ep = train_x.size(0) // cur_sz
@@ -199,10 +204,14 @@ for i, train_batch in enumerate(dataset):
                     use_cuda=use_cuda)
                 lat_mb_x = maybe_cuda(lat_mb_x, use_cuda=use_cuda)
 
+            # if lat_mb_x is not None, this tensor will be concatenated in
+            # the forward pass on-the-fly in the latent replay layer
             logits, lat_acts = model(
                 x_mb, latent_input=lat_mb_x, return_lat_acts=True)
 
             # collect latent volumes only for the first ep
+            # we need to store them to eventually add them into the external
+            # replay memory
             if ep == 0:
                 lat_acts = lat_acts.cpu().detach()
                 if it == 0:

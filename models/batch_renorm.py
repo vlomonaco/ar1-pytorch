@@ -2,11 +2,13 @@
 # -*- coding: utf-8 -*-
 
 ################################################################################
-# Copyright (c) 2020. Vincenzo Lomonaco. All rights reserved.                  #
+# Copyright (c) 2020. Vincenzo Lomonaco, Gabriele Graffieti, Lorenzo           #
+# Pellegrini, Davide Maltoni. All rights reserved.                             #
 # See the accompanying LICENSE file for terms.                                 #
 #                                                                              #
 # Date: 01-04-2020                                                             #
-# Author: Vincenzo Lomonaco                                                    #
+# Authors: Vincenzo Lomonaco, Gabriele Graffieti, Lorenzo Pellegrini, Davide   #
+# Maltoni.                                                                     #
 # E-mail: vincenzo.lomonaco@unibo.it                                           #
 # Website: vincenzolomonaco.com                                                #
 ################################################################################
