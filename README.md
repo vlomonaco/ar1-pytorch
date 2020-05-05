@@ -7,9 +7,9 @@
 
 ### Introduction
 
-In this repository you will find a pytorch implementation of **AR1\* with Latent
- Replay**. AR1* was shown to be very effective and efficient for continual
-  learning with real-world images. 
+In this repository you will find a pytorch re-implementation of **AR1\* with
+ Latent Replay**. AR1* was shown to be very effective and efficient for
+  continual learning with real-world images. 
   
 Please consider citing the following paper if you want to use our algorithm in
  your research project or application:
@@ -85,18 +85,30 @@ The results will be logged on tensorboard, you can run it with:
 tensorboard --logdir logs
 ```
 
-Then open your browser at `http://localhost:6006`. If everthing is ok you
- should reach ~77% of accuracy at the end of the entire training
-  (~24m on a single TitanX GPU).
-
+Then open your browser at `http://localhost:6006`. If everything is setup you
+ should reach ~77% of accuracy at the end of the entire training procedure
+  (~24m on a single TitanX GPU). 
+  
+This results is a few percentage point better than the one 
+  suggested in the original paper. Keep in mind that this implementation
+   is *slightly different* from the original one in Caffe for a number of
+    reasons:
+   
+   - the ImageNet pre-trained model is different.
+   - the pytorch SGD optimizer is different.
+   - the Batch Renormalization Layers are different.
+   - we did not find any advantage in keeping the BRN layers below the latent
+    reply layer free to learn, so we freeze them from the first batch.
 
 ### Use AR1* in your project
 
 You are free to take this code and use it in your own project! However, take
- in mind that the hyperparameters used in the experiment ([params.cfg
+ in mind that the hyper-parameters used in the experiment ([params.cfg
 ](params.cfg)) have been chosen to replicate the results shown in
  the paper for the CORe50 NICv2-391 scenario and may result suboptimal in
   different settings.
 
-We suggest to take a look at the papers suggested above to have a better idea
- on how to parametrize AR1* on different benchamarks.
+We suggest to take a look at the papers linked above to have a better idea
+ on how to parametrize AR1* on different benchmarks. In particular we
+  underling the importance of BN / BRN parameters, which may be fundamental
+   to tune appropriately. 
