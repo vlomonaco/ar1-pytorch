@@ -69,7 +69,7 @@ momentum = eval(exp_config['momentum'])
 l2 = eval(exp_config['l2'])
 freeze_below_layer = eval(exp_config['freeze_below_layer'])
 latent_layer_num = eval(exp_config['latent_layer_num'])
-ewc_lambda = eval(exp_config['ewc_lambda'])
+reg_lambda = eval(exp_config['reg_lambda'])
 
 # setting up log dir for tensorboard
 log_dir = 'logs/' + exp_name
@@ -100,7 +100,10 @@ replace_bn_with_brn(
 model.saved_weights = {}
 model.past_j = {i:0 for i in range(50)}
 model.cur_j = {i:0 for i in range(50)}
-if ewc_lambda != 0:
+if reg_lambda != 0:
+    # the regularization is based on Synaptic Intelligence as described in the
+    # paper. ewcData is a list of two elements (best parametes, importance)
+    # while synData is a dictionary with all the trajectory data needed by SI
     ewcData, synData = create_syn_data(model)
 
 # Optimizer setup
@@ -114,7 +117,7 @@ criterion = torch.nn.CrossEntropyLoss()
 # loop over the training incremental batches
 for i, train_batch in enumerate(dataset):
 
-    if ewc_lambda != 0:
+    if reg_lambda != 0:
         init_batch(model, ewcData, synData)
 
     # we freeze the layer below the replay layer since the first batch
@@ -182,7 +185,7 @@ for i, train_batch in enumerate(dataset):
 
         for it in range(it_x_ep):
 
-            if ewc_lambda !=0:
+            if reg_lambda !=0:
                 pre_update(model, synData)
 
             start = it * (mb_size - n2inject)
@@ -223,14 +226,14 @@ for i, train_batch in enumerate(dataset):
             correct_cnt += (pred_label == y_mb).sum()
 
             loss = criterion(logits, y_mb)
-            if ewc_lambda !=0:
-                loss += compute_ewc_loss(model, ewcData, lambd=ewc_lambda)
+            if reg_lambda !=0:
+                loss += compute_ewc_loss(model, ewcData, lambd=reg_lambda)
             ave_loss += loss.item()
 
             loss.backward()
             optimizer.step()
 
-            if ewc_lambda !=0:
+            if reg_lambda !=0:
                 post_update(model, synData)
 
             acc = correct_cnt.item() / \
@@ -252,7 +255,7 @@ for i, train_batch in enumerate(dataset):
         cur_ep += 1
 
     consolidate_weights(model, cur_class)
-    if ewc_lambda != 0:
+    if reg_lambda != 0:
         update_ewc_data(model, ewcData, synData, 0.001, 1)
 
     # how many patterns to save for next iter
